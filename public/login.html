@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Log in to your EventHub account to register for events and manage your registrations.">
+    <title>Login — EventHub</title>
+    <link rel="stylesheet" href="/assets/css/style.css?v=3">
+</head>
+<body>
+    <main class="main-content" role="main">
+        <div class="container">
+            <div id="flash-container" class="flash-container"></div>
+            <div class="auth-container">
+                <div class="card auth-card">
+                    <h1>Welcome Back</h1>
+                    <p class="subtitle">Log in to access your events</p>
+
+                    <form id="login-form" novalidate>
+                        <div class="form-group">
+                            <label class="form-label" for="login-email">Email</label>
+                            <input type="email" id="login-email" name="email" class="form-input" placeholder="you@example.com" autocomplete="email" required>
+                            <div class="form-error"></div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="login-password">Password</label>
+                            <div class="password-wrapper">
+                                <input type="password" id="login-password" name="password" class="form-input" placeholder="Enter your password" autocomplete="current-password" required>
+                                <button type="button" class="password-toggle">Show</button>
+                            </div>
+                            <div class="form-error"></div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-block btn-lg">Log In</button>
+                    </form>
+
+                    <div class="auth-footer">
+                        Don't have an account? <a href="/signup.html">Sign up</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/assets/vendor/jquery-3.7.1.min.js"></script>
+    <script src="/assets/js/common.js?v=3"></script>
+    <script src="/assets/js/auth.js?v=3"></script>
+</body>
+</html>

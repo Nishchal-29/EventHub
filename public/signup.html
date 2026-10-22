@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Create your EventHub account to discover and register for events.">
+    <title>Sign Up — EventHub</title>
+    <link rel="stylesheet" href="/assets/css/style.css?v=3">
+</head>
+<body>
+    <main class="main-content" role="main">
+        <div class="container">
+            <div id="flash-container" class="flash-container"></div>
+            <div class="auth-container">
+                <div class="card auth-card">
+                    <h1>Create Account</h1>
+                    <p class="subtitle">Join EventHub to discover amazing events</p>
+
+                    <form id="signup-form" novalidate>
+                        <div class="form-group">
+                            <label class="form-label" for="signup-name">Full Name</label>
+                            <input type="text" id="signup-name" name="name" class="form-input" placeholder="John Doe" autocomplete="name" required>
+                            <div class="form-error"></div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="signup-email">Email</label>
+                            <input type="email" id="signup-email" name="email" class="form-input" placeholder="you@example.com" autocomplete="email" required>
+                            <div class="form-error"></div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="signup-password">Password</label>
+                            <div class="password-wrapper">
+                                <input type="password" id="signup-password" name="password" class="form-input" placeholder="Min 8 chars, letter + number" autocomplete="new-password" required>
+                                <button type="button" class="password-toggle">Show</button>
+                            </div>
+                            <div class="form-error"></div>
+                            <div class="form-hint">At least 8 characters with one letter and one number.</div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary btn-block btn-lg">Create Account</button>
+                    </form>
+
+                    <div class="auth-footer">
+                        Already have an account? <a href="/login.html">Log in</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/assets/vendor/jquery-3.7.1.min.js"></script>
+    <script src="/assets/js/common.js?v=3"></script>
+    <script src="/assets/js/auth.js?v=3"></script>
+</body>
+</html>
