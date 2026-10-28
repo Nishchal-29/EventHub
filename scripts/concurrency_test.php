@@ -1,19 +1,6 @@
 <?php
 declare(strict_types=1);
 
-/**
- * Concurrency Test — verifies that over-capacity and duplicate registrations
- * are impossible under parallel requests using curl_multi.
- *
- * Usage: php scripts\concurrency_test.php [base_url]
- * Default base URL: http://localhost:8080
- *
- * Prerequisites:
- * - The app must be running and reachable at the base URL.
- * - The database must have the seed data loaded.
- * - curl extension must be enabled in PHP.
- */
-
 if (php_sapi_name() !== 'cli') {
     die("This script must be run from the command line.\n");
 }
@@ -28,10 +15,8 @@ echo "========================================\n\n";
 
 $allPassed = true;
 
-// ── Helper: create a user and get session cookie + CSRF token ────────
 function createTestUser(string $baseUrl, string $email, string $name, string $password): ?array
 {
-    // Get CSRF token
     $ch = curl_init("$baseUrl/api/csrf.php");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -44,7 +29,6 @@ function createTestUser(string $baseUrl, string $email, string $name, string $pa
     $body = substr($response, $headerSize);
     curl_close($ch);
 
-    // Extract session cookie
     preg_match_all('/Set-Cookie:\s*([^;\r\n]+)/i', $headers, $matches);
     $cookies = implode('; ', $matches[1] ?? []);
 
@@ -56,7 +40,6 @@ function createTestUser(string $baseUrl, string $email, string $name, string $pa
         return null;
     }
 
-    // Sign up
     $ch = curl_init("$baseUrl/api/signup.php");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -76,7 +59,6 @@ function createTestUser(string $baseUrl, string $email, string $name, string $pa
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    // Update cookies from signup response
     preg_match_all('/Set-Cookie:\s*([^;\r\n]+)/i', $headers, $matches);
     if (!empty($matches[1])) {
         $cookies = implode('; ', $matches[1]);
@@ -84,9 +66,7 @@ function createTestUser(string $baseUrl, string $email, string $name, string $pa
 
     $result = json_decode($body, true);
     if ($httpCode === 201 || ($httpCode === 409 && ($result['error']['code'] ?? '') === 'DUPLICATE')) {
-        // If duplicate, log in instead
         if ($httpCode === 409) {
-            // Get fresh CSRF
             $ch = curl_init("$baseUrl/api/csrf.php");
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
@@ -132,10 +112,8 @@ function createTestUser(string $baseUrl, string $email, string $name, string $pa
     return null;
 }
 
-// ── Helper: get session for existing user ────────────────────────────
 function loginUser(string $baseUrl, string $email, string $password): ?array
 {
-    // Get CSRF
     $ch = curl_init("$baseUrl/api/csrf.php");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -152,7 +130,6 @@ function loginUser(string $baseUrl, string $email, string $password): ?array
     $data = json_decode($body, true);
     $csrfToken = $data['data']['token'] ?? '';
 
-    // Login
     $ch = curl_init("$baseUrl/api/login.php");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -183,7 +160,6 @@ function loginUser(string $baseUrl, string $email, string $password): ?array
     return null;
 }
 
-// ── Helper: fire concurrent registrations ────────────────────────────
 function fireConcurrentRegistrations(string $baseUrl, array $sessions, int $eventId): array
 {
     $mh = curl_multi_init();
@@ -205,7 +181,6 @@ function fireConcurrentRegistrations(string $baseUrl, array $sessions, int $even
         $handles[$i] = $ch;
     }
 
-    // Execute all in parallel
     $running = null;
     do {
         curl_multi_exec($mh, $running);
@@ -228,7 +203,6 @@ function fireConcurrentRegistrations(string $baseUrl, array $sessions, int $even
     return $results;
 }
 
-// ── Helper: clean up test registrations for an event ─────────────────
 function cleanupRegistrations(string $baseUrl, array $sessions, int $eventId): void
 {
     foreach ($sessions as $session) {
@@ -248,7 +222,6 @@ function cleanupRegistrations(string $baseUrl, array $sessions, int $eventId): v
     }
 }
 
-// ── Helper: get DB registration count for an event ───────────────────
 function getDbRegCount(int $eventId): int
 {
     require_once __DIR__ . '/../includes/config.php';
@@ -259,7 +232,6 @@ function getDbRegCount(int $eventId): int
     return (int) $stmt->fetchColumn();
 }
 
-// ── Helper: create a fresh test event via admin ──────────────────────
 function createTestEvent(string $baseUrl, string $title, int $capacity): ?int
 {
     $adminSession = loginUser($baseUrl, 'admin@example.com', 'AdminPass1');
@@ -301,7 +273,6 @@ function createTestEvent(string $baseUrl, string $title, int $capacity): ?int
     return null;
 }
 
-// ── Helper: delete test event via admin ──────────────────────────────
 function deleteTestEvent(string $baseUrl, int $eventId): void
 {
     $adminSession = loginUser($baseUrl, 'admin@example.com', 'AdminPass1');
@@ -322,9 +293,7 @@ function deleteTestEvent(string $baseUrl, int $eventId): void
     curl_close($ch);
 }
 
-// ══════════════════════════════════════════════════════════════════════
 // TEST 1: N users racing for capacity-1 event → exactly 1 succeeds
-// ══════════════════════════════════════════════════════════════════════
 echo "TEST 1: N users racing for a capacity-1 event\n";
 echo str_repeat('-', 50) . "\n";
 
@@ -335,7 +304,6 @@ if ($testEventId1 === null) {
     echo "  SKIP: Could not create test event.\n\n";
     $allPassed = false;
 } else {
-    // Create N test users with sessions
     $sessions1 = [];
     for ($i = 1; $i <= $numUsers; $i++) {
         $email = "conctest1_user{$i}_" . time() . "@test.com";
@@ -374,9 +342,7 @@ if ($testEventId1 === null) {
     deleteTestEvent($baseUrl, $testEventId1);
 }
 
-// ══════════════════════════════════════════════════════════════════════
 // TEST 2: N users racing for capacity-5 event → exactly 5 succeed
-// ══════════════════════════════════════════════════════════════════════
 echo "TEST 2: N users racing for a capacity-5 event\n";
 echo str_repeat('-', 50) . "\n";
 
@@ -425,9 +391,7 @@ if ($testEventId2 === null) {
     deleteTestEvent($baseUrl, $testEventId2);
 }
 
-// ══════════════════════════════════════════════════════════════════════
 // TEST 3: Same user fires 10 simultaneous registrations → exactly 1 succeeds
-// ══════════════════════════════════════════════════════════════════════
 echo "TEST 3: Same user fires 10 simultaneous registrations (duplicate prevention)\n";
 echo str_repeat('-', 50) . "\n";
 
@@ -438,23 +402,30 @@ if ($testEventId3 === null) {
     $allPassed = false;
 } else {
     $dupEmail = "conctest3_dup_" . time() . "@test.com";
-    $dupSession = createTestUser($baseUrl, $dupEmail, "Dup Test User", "TestPass1");
 
-    if (!$dupSession) {
-        echo "  SKIP: Could not create test user.\n\n";
+    $firstSession = createTestUser($baseUrl, $dupEmail, "Dup Test User", "TestPass1");
+
+    $dupSessions = [];
+    if ($firstSession) {
+        for ($i = 0; $i < 10; $i++) {
+            $s = loginUser($baseUrl, $dupEmail, 'TestPass1');
+            if ($s) $dupSessions[] = $s;
+        }
+    }
+
+    if (count($dupSessions) < 2) {
+        echo "  SKIP: Could not create enough sessions for the test user.\n\n";
         $allPassed = false;
     } else {
-        // Create 10 identical sessions (same cookies/csrf)
-        $dupSessions = array_fill(0, 10, $dupSession);
-
-        echo "  Firing 10 simultaneous registrations from the same user...\n";
+        $n = count($dupSessions);
+        echo "  Firing $n simultaneous registrations from the same user (separate sessions)...\n";
 
         $results3 = fireConcurrentRegistrations($baseUrl, $dupSessions, $testEventId3);
 
         $successes3 = 0;
         $duplicates3 = 0;
         foreach ($results3 as $r) {
-            if ($r['http_code'] === 201) {
+            if ($r['http_code'] >= 200 && $r['http_code'] < 300) {
                 $successes3++;
             } elseif ($r['http_code'] === 409 && ($r['body']['error']['code'] ?? '') === 'DUPLICATE') {
                 $duplicates3++;
@@ -462,23 +433,19 @@ if ($testEventId3 === null) {
         }
 
         $dbCount3 = getDbRegCount($testEventId3);
-
         echo "  Results: $successes3 succeeded, $duplicates3 got DUPLICATE, DB count=$dbCount3\n";
 
-        if ($successes3 === 1 && $dbCount3 === 1) {
+        if ($successes3 === 1 && $duplicates3 === $n - 1 && $dbCount3 === 1) {
             echo "  ✅ PASS\n\n";
         } else {
-            echo "  ❌ FAIL (expected exactly 1 success, DB count 1)\n\n";
+            echo "  ❌ FAIL (expected 1 success, " . ($n - 1) . " DUPLICATE, DB count 1)\n\n";
             $allPassed = false;
         }
-
-        deleteTestEvent($baseUrl, $testEventId3);
     }
+
+    deleteTestEvent($baseUrl, $testEventId3);   
 }
 
-// ══════════════════════════════════════════════════════════════════════
-// Summary
-// ══════════════════════════════════════════════════════════════════════
 echo "========================================\n";
 if ($allPassed) {
     echo "  ALL TESTS PASSED ✅\n";
