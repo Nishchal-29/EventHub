@@ -1,33 +1,18 @@
 <?php
 declare(strict_types=1);
 
-/**
- * RegistrationService — the core transactional logic.
- *
- * Row-level locking (SELECT ... FOR UPDATE) on the event row serializes
- * concurrent registrations for the same event, preventing over-capacity.
- * The partial unique index (uq_active_registration) is a database-level
- * safety net against duplicate active registrations.
- */
 class RegistrationService
 {
     private PDO $db;
-
     public function __construct(PDO $db)
     {
         $this->db = $db;
     }
 
-    /**
-     * Register a user for an event.
-     *
-     * @return array Updated event data with seat counts.
-     */
     public function register(int $userId, int $eventId): array
     {
         $this->db->beginTransaction();
         try {
-            // Lock the event row to serialize concurrent registrations
             $stmt = $this->db->prepare("SELECT id, capacity, event_date FROM events WHERE id = :id FOR UPDATE");
             $stmt->execute(['id' => $eventId]);
             $event = $stmt->fetch();
@@ -37,14 +22,12 @@ class RegistrationService
                 json_error('NOT_FOUND', 'Event not found.', 404);
             }
 
-            // Reject past events
             $eventDate = new DateTimeImmutable($event['event_date']);
             if ($eventDate <= new DateTimeImmutable()) {
                 $this->db->rollBack();
                 json_error('EVENT_PASSED', 'This event has already passed.', 409);
             }
 
-            // Check for existing active registration by this user
             $stmt = $this->db->prepare(
                 "SELECT id FROM registrations WHERE event_id = :event_id AND user_id = :user_id AND status = 'active'"
             );
@@ -54,7 +37,6 @@ class RegistrationService
                 json_error('DUPLICATE', 'You are already registered for this event.', 409);
             }
 
-            // Count active registrations
             $stmt = $this->db->prepare(
                 "SELECT COUNT(*) FROM registrations WHERE event_id = :event_id AND status = 'active'"
             );
@@ -66,7 +48,8 @@ class RegistrationService
                 json_error('FULL', 'This event is full. No seats remaining.', 409);
             }
 
-            // Insert registration
+            // usleep(300000);
+
             $stmt = $this->db->prepare(
                 "INSERT INTO registrations (event_id, user_id, status) VALUES (:event_id, :user_id, 'active')"
             );
@@ -74,13 +57,11 @@ class RegistrationService
 
             $this->db->commit();
 
-            // Return updated counts
             return $this->getEventCounts($eventId, $userId);
         } catch (\PDOException $e) {
             if ($this->db->inTransaction()) {
                 $this->db->rollBack();
             }
-            // Catch unique violation from the partial index as a safety net
             if ($e->getCode() === '23505') {
                 json_error('DUPLICATE', 'You are already registered for this event.', 409);
             }
@@ -93,14 +74,10 @@ class RegistrationService
         }
     }
 
-    /**
-     * Cancel a user's registration for an event.
-     */
     public function cancel(int $userId, int $eventId): array
     {
         $this->db->beginTransaction();
         try {
-            // Lock the event row
             $stmt = $this->db->prepare("SELECT id, event_date FROM events WHERE id = :id FOR UPDATE");
             $stmt->execute(['id' => $eventId]);
             $event = $stmt->fetch();
@@ -110,14 +87,12 @@ class RegistrationService
                 json_error('NOT_FOUND', 'Event not found.', 404);
             }
 
-            // Disallow cancelling after the event has started
             $eventDate = new DateTimeImmutable($event['event_date']);
             if ($eventDate <= new DateTimeImmutable()) {
                 $this->db->rollBack();
                 json_error('EVENT_PASSED', 'Cannot cancel registration for a past event.', 409);
             }
 
-            // Cancel the registration
             $stmt = $this->db->prepare(
                 "UPDATE registrations SET status = 'cancelled', cancelled_at = NOW()
                  WHERE event_id = :event_id AND user_id = :user_id AND status = 'active'"
@@ -140,9 +115,6 @@ class RegistrationService
         }
     }
 
-    /**
-     * Get user's registrations with event details, split by upcoming/past.
-     */
     public function getUserRegistrations(int $userId): array
     {
         $sql = "
@@ -191,9 +163,6 @@ class RegistrationService
         return ['upcoming' => $upcoming, 'past' => $past];
     }
 
-    /**
-     * Get attendees for an event (admin).
-     */
     public function getAttendees(int $eventId): array
     {
         $sql = "
@@ -214,9 +183,6 @@ class RegistrationService
         return $rows;
     }
 
-    /**
-     * Fresh event counts after a registration change.
-     */
     private function getEventCounts(int $eventId, int $userId): array
     {
         $stmt = $this->db->prepare(
@@ -236,6 +202,7 @@ class RegistrationService
         $userRegistered = (bool) $stmt->fetch();
 
         return [
+            'id'               => $eventId,
             'event_id'         => $eventId,
             'capacity'         => $capacity,
             'registered_count' => $registeredCount,

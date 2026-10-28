@@ -1,21 +1,27 @@
-/**
- * common.js — Shared utilities: API wrapper, CSRF, toast, navbar, escaping.
- * Loaded on every page before page-specific JS.
- */
 'use strict';
 
-const App = (function ($) {
-    let csrfToken = null;
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const on = (evt, sel, fn, root = document) => {
+    root.addEventListener(evt, e => {
+        const target = e.target.closest(sel);
+        if (target && root.contains(target)) fn.call(target, e, target);
+    });
+};
 
-    // ── HTML Escaping ────────────────────────────────────────────────
+const App = (() => {
+    let csrfToken = null;
+    let csrfPromise = null;
+    let currentUser = null;
+    let toastContainer = null;
+
     function escapeHtml(str) {
         if (str === null || str === undefined) return '';
         const div = document.createElement('div');
-        div.appendChild(document.createTextNode(String(str)));
+        div.textContent = String(str);
         return div.innerHTML;
     }
 
-    // ── Date Formatting ──────────────────────────────────────────────
     function formatDate(iso) {
         const d = new Date(iso);
         return d.toLocaleDateString(undefined, {
@@ -31,302 +37,290 @@ const App = (function ($) {
     }
 
     function formatDateTime(iso) {
-        return formatDate(iso) + ' at ' + formatTime(iso);
+        return `${formatDate(iso)} at ${formatTime(iso)}`;
     }
 
     function isoToDatetimeLocal(iso) {
         const d = new Date(iso);
         const pad = n => String(n).padStart(2, '0');
-        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
-               'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
 
-    // ── Text Truncation ──────────────────────────────────────────────
     function truncate(str, len) {
         if (!str) return '';
         return str.length > len ? str.substring(0, len) + '…' : str;
     }
 
-    // ── CSRF Token ───────────────────────────────────────────────────
-    let csrfPromise = null;
-
-    function fetchCsrf() {
-        csrfPromise = $.ajax({
-            url: '/api/csrf.php',
-            method: 'GET',
-            dataType: 'json',
-            cache: false
-        }).then(function (res) {
-            if (res && res.success && res.data && res.data.token) {
-                csrfToken = res.data.token;
+    async function fetchCsrf() {
+        try {
+            const res = await fetch('/api/csrf.php', { cache: 'no-store' });
+            const json = await res.json();
+            if (json?.success && json.data?.token) {
+                csrfToken = json.data.token;
             }
-            return csrfToken;
-        }).fail(function () {
-            csrfPromise = null;
-        });
-        return csrfPromise;
+        } catch {
+            csrfToken = null;
+        }
+        csrfPromise = null;
+        return csrfToken;
     }
 
     function ensureCsrf() {
-        if (csrfToken) {
-            return $.Deferred().resolve(csrfToken).promise();
-        }
-        if (csrfPromise) {
-            return csrfPromise;
-        }
-        return fetchCsrf();
+        if (csrfToken) return Promise.resolve(csrfToken);
+        if (!csrfPromise) csrfPromise = fetchCsrf();
+        return csrfPromise;
     }
 
-    // ── API Wrapper ──────────────────────────────────────────────────
-    function api(method, url, data) {
-        const upperMethod = method.toUpperCase();
-
-        if (upperMethod !== 'GET' && !csrfToken) {
-            return ensureCsrf().then(function () {
-                return executeRequest(upperMethod, url, data);
-            });
+    async function api(method, url, data) {
+        const upper = method.toUpperCase();
+        if (upper !== 'GET' && !csrfToken) {
+            await ensureCsrf();
         }
-        return executeRequest(upperMethod, url, data);
-    }
 
-    function executeRequest(method, url, data) {
+        let fetchUrl = url;
         const opts = {
-            url: url,
-            method: method,
-            dataType: 'json',
-            headers: {}
+            method: upper,
+            headers: { 'Accept': 'application/json' }
         };
 
         if (csrfToken) {
             opts.headers['X-CSRF-Token'] = csrfToken;
         }
 
-        if (data && method !== 'GET') {
-            opts.contentType = 'application/json; charset=utf-8';
-            opts.data = JSON.stringify(data);
-        } else if (data && method === 'GET') {
-            opts.data = data;
+        if (data) {
+            if (upper === 'GET') {
+                const params = new URLSearchParams();
+                Object.entries(data).forEach(([k, v]) => {
+                    if (v !== undefined && v !== null && v !== '') params.append(k, v);
+                });
+                const qs = params.toString();
+                if (qs) fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + qs;
+            } else {
+                opts.headers['Content-Type'] = 'application/json; charset=utf-8';
+                opts.body = JSON.stringify(data);
+            }
         }
 
-        return $.ajax(opts).then(
-            function (res) { return res; },
-            function (xhr) {
-                let res;
-                try {
-                    res = JSON.parse(xhr.responseText);
-                } catch (e) {
-                    res = { success: false, error: { code: 'UNKNOWN', message: 'An unexpected error occurred.' } };
-                }
+        let response, json;
+        try {
+            response = await fetch(fetchUrl, opts);
+            json = await response.json().catch(() => null);
+        } catch (err) {
+            toast('error', 'Network error. Please check your connection.');
+            return Promise.reject({ success: false, error: { code: 'NETWORK_ERROR', message: 'Network error.' } });
+        }
 
-                const status = xhr.status;
-                if (status === 401) {
-                    if (!url.includes('/api/login.php') && window.location.pathname !== '/login.html') {
-                        const next = encodeURIComponent(window.location.pathname + window.location.search);
-                        window.location.href = '/login.html?next=' + next;
-                    }
-                    return $.Deferred().reject(res, status).promise();
-                }
-                if (status === 403) {
-                    if (res && res.error && res.error.code === 'CSRF_FAILURE') {
-                        csrfToken = null;
-                        csrfPromise = null;
-                        toast('error', 'Security token refreshed. Please try again.');
-                    } else {
-                        toast('error', res.error ? res.error.message : 'Access denied.');
-                    }
-                }
-                if (status === 429) {
-                    toast('error', res.error ? res.error.message : 'Too many requests. Please wait.');
-                }
-                if (status >= 500) {
-                    toast('error', 'Server error. Please try again later.');
-                }
+        if (response.ok && json?.success) {
+            return json;
+        }
 
-                return $.Deferred().reject(res, status).promise();
+        const res = json || {
+            success: false,
+            error: { code: 'UNKNOWN', message: 'An unexpected error occurred.' }
+        };
+
+        const status = response.status;
+        if (status === 401) {
+            if (!url.includes('/api/login.php') && window.location.pathname !== '/login.html') {
+                const next = encodeURIComponent(window.location.pathname + window.location.search);
+                window.location.href = `/login.html?next=${next}`;
             }
-        );
+        } else if (status === 403) {
+            if (res.error?.code === 'CSRF_FAILURE') {
+                csrfToken = null;
+                toast('error', 'Security token refreshed. Please try again.');
+            } else {
+                toast('error', res.error?.message || 'Access denied.');
+            }
+        } else if (status === 429) {
+            toast('error', res.error?.message || 'Too many requests. Please wait.');
+        } else if (status >= 500) {
+            toast('error', 'Server error. Please try again later.');
+        }
+
+        return Promise.reject(res);
     }
 
-    // ── Flash Messages & Toasts ──────────────────────────────────────
-    let toastContainer = null;
-
     function ensureToastContainer() {
-        if (!toastContainer || !toastContainer.closest('body').length) {
-            toastContainer = $('<div class="toast-container" aria-live="polite" role="status"></div>');
-            $('body').append(toastContainer);
+        if (!toastContainer || !document.body.contains(toastContainer)) {
+            toastContainer = document.createElement('div');
+            toastContainer.className = 'toast-container';
+            toastContainer.setAttribute('aria-live', 'polite');
+            toastContainer.setAttribute('role', 'status');
+            document.body.appendChild(toastContainer);
         }
     }
 
     function showInPageAlert(type, message) {
-        let $flashContainer = $('#flash-container');
-        if (!$flashContainer.length) {
-            const $target = $('.main-content .container').first();
-            if ($target.length) {
-                $flashContainer = $('<div id="flash-container" class="flash-container"></div>');
-                $target.prepend($flashContainer);
+        let flashContainer = $('#flash-container');
+        if (!flashContainer) {
+            const target = $('.main-content .container');
+            if (target) {
+                flashContainer = document.createElement('div');
+                flashContainer.id = 'flash-container';
+                flashContainer.className = 'flash-container';
+                target.prepend(flashContainer);
             }
         }
 
-        if ($flashContainer.length) {
-            const icons = { success: '✓', error: '✕', info: 'ℹ' };
-            const $alert = $(
-                '<div class="alert alert-' + escapeHtml(type) + '" role="alert">' +
-                    '<span class="alert-icon">' + (icons[type] || 'ℹ') + '</span>' +
-                    '<span class="alert-message"></span>' +
-                    '<button type="button" class="alert-close" aria-label="Close">×</button>' +
-                '</div>'
-            );
-            $alert.find('.alert-message').text(message);
-            $alert.find('.alert-close').on('click', function () {
-                $alert.addClass('removing');
-                setTimeout(function () { $alert.remove(); }, 250);
-            });
-            $flashContainer.empty().append($alert);
-            setTimeout(function () {
-                if ($alert.closest('body').length && !$alert.hasClass('removing')) {
-                    $alert.addClass('removing');
-                    setTimeout(function () { $alert.remove(); }, 250);
-                }
-            }, 6000);
-        }
+        if (!flashContainer) return;
+
+        const icons = { success: '✓', error: '✕', info: 'ℹ' };
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${escapeHtml(type)}`;
+        alert.setAttribute('role', 'alert');
+        alert.innerHTML = `
+            <span class="alert-icon">${icons[type] || 'ℹ'}</span>
+            <span class="alert-message"></span>
+            <button type="button" class="alert-close" aria-label="Close">×</button>
+        `;
+        alert.querySelector('.alert-message').textContent = message;
+
+        const removeAlert = () => {
+            alert.classList.add('removing');
+            setTimeout(() => alert.remove(), 250);
+        };
+
+        alert.querySelector('.alert-close').addEventListener('click', removeAlert);
+        flashContainer.innerHTML = '';
+        flashContainer.appendChild(alert);
+
+        setTimeout(() => {
+            if (document.body.contains(alert) && !alert.classList.contains('removing')) {
+                removeAlert();
+            }
+        }, 6000);
     }
 
     function toast(type, message) {
         showInPageAlert(type, message);
         ensureToastContainer();
+
         const icons = { success: '✓', error: '✕', info: 'ℹ' };
-        const $toast = $(
-            '<div class="toast toast-' + escapeHtml(type) + '">' +
-                '<span class="toast-icon">' + (icons[type] || 'ℹ') + '</span>' +
-                '<span class="toast-message"></span>' +
-                '<button class="toast-close" aria-label="Close">×</button>' +
-            '</div>'
-        );
-        $toast.find('.toast-message').text(message);
-        $toast.find('.toast-close').on('click', function () {
-            removeToast($toast);
-        });
-        toastContainer.append($toast);
-        setTimeout(function () { removeToast($toast); }, 5000);
+        const el = document.createElement('div');
+        el.className = `toast toast-${escapeHtml(type)}`;
+        el.innerHTML = `
+            <span class="toast-icon">${icons[type] || 'ℹ'}</span>
+            <span class="toast-message"></span>
+            <button class="toast-close" aria-label="Close">×</button>
+        `;
+        el.querySelector('.toast-message').textContent = message;
+
+        const removeToast = () => {
+            if (el.classList.contains('removing')) return;
+            el.classList.add('removing');
+            setTimeout(() => el.remove(), 250);
+        };
+
+        el.querySelector('.toast-close').addEventListener('click', removeToast);
+        toastContainer.appendChild(el);
+        setTimeout(removeToast, 5000);
     }
 
-    function removeToast($toast) {
-        if ($toast.hasClass('removing')) return;
-        $toast.addClass('removing');
-        setTimeout(function () { $toast.remove(); }, 250);
-    }
+    function confirm(title, message, confirmText = 'Confirm', confirmClass = 'btn-danger') {
+        return new Promise(resolve => {
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+            overlay.innerHTML = `
+                <div class="modal">
+                    <div class="modal-header">
+                        <h2></h2>
+                        <button class="modal-close" aria-label="Close">×</button>
+                    </div>
+                    <div class="modal-body"><p></p></div>
+                    <div class="modal-footer">
+                        <button class="btn btn-outline btn-cancel">Cancel</button>
+                        <button class="btn ${escapeHtml(confirmClass)} btn-confirm"></button>
+                    </div>
+                </div>
+            `;
 
-    // ── Confirm Modal ────────────────────────────────────────────────
-    function confirm(title, message, confirmText, confirmClass) {
-        const deferred = $.Deferred();
-        confirmText = confirmText || 'Confirm';
-        confirmClass = confirmClass || 'btn-danger';
+            overlay.querySelector('.modal-header h2').textContent = title;
+            overlay.querySelector('.modal-body p').textContent = message;
+            const confirmBtn = overlay.querySelector('.btn-confirm');
+            confirmBtn.textContent = confirmText;
 
-        const $overlay = $(
-            '<div class="modal-overlay" role="dialog" aria-modal="true">' +
-                '<div class="modal">' +
-                    '<div class="modal-header">' +
-                        '<h2></h2>' +
-                        '<button class="modal-close" aria-label="Close">×</button>' +
-                    '</div>' +
-                    '<div class="modal-body"><p></p></div>' +
-                    '<div class="modal-footer">' +
-                        '<button class="btn btn-outline btn-cancel">Cancel</button>' +
-                        '<button class="btn ' + escapeHtml(confirmClass) + ' btn-confirm"></button>' +
-                    '</div>' +
-                '</div>' +
-            '</div>'
-        );
+            const close = result => {
+                document.removeEventListener('keydown', onKeyDown);
+                overlay.classList.add('removing');
+                setTimeout(() => overlay.remove(), 200);
+                resolve(result);
+            };
 
-        $overlay.find('.modal-header h2').text(title);
-        $overlay.find('.modal-body p').text(message);
-        $overlay.find('.btn-confirm').text(confirmText);
+            const onKeyDown = e => {
+                if (e.key === 'Escape') close(false);
+            };
 
-        function close(result) {
-            $overlay.addClass('removing');
-            setTimeout(function () { $overlay.remove(); }, 200);
-            deferred.resolve(result);
-        }
+            overlay.querySelector('.btn-confirm').addEventListener('click', () => close(true));
+            overlay.querySelector('.btn-cancel').addEventListener('click', () => close(false));
+            overlay.querySelector('.modal-close').addEventListener('click', () => close(false));
+            overlay.addEventListener('click', e => {
+                if (e.target === overlay) close(false);
+            });
+            document.addEventListener('keydown', onKeyDown);
 
-        $overlay.find('.btn-confirm').on('click', function () { close(true); });
-        $overlay.find('.btn-cancel, .modal-close').on('click', function () { close(false); });
-        $overlay.on('click', function (e) {
-            if ($(e.target).hasClass('modal-overlay')) close(false);
+            document.body.appendChild(overlay);
+            confirmBtn.focus();
         });
-
-        // Keyboard: Escape to close
-        $(document).on('keydown.confirm', function (e) {
-            if (e.key === 'Escape') {
-                $(document).off('keydown.confirm');
-                close(false);
-            }
-        });
-
-        $('body').append($overlay);
-        $overlay.find('.btn-confirm').focus();
-
-        return deferred.promise();
     }
-
-    // ── Navbar ───────────────────────────────────────────────────────
-    let currentUser = null;
 
     function buildNavbar() {
         const path = window.location.pathname;
-        const isActive = (p) => path === p || path === p.replace('.html', '') ? ' active' : '';
+        const isActive = p => (path === p || path === p.replace('.html', '')) ? ' active' : '';
 
-        let navHtml =
-            '<nav class="navbar" role="navigation" aria-label="Main navigation">' +
-                '<div class="container">' +
-                    '<a href="/index.html" class="navbar-brand">EventHub</a>' +
-                    '<button class="navbar-toggle" id="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>' +
-                    '<ul class="navbar-nav" id="nav-menu">' +
-                        '<li><a href="/index.html" class="' + isActive('/index.html') + isActive('/') + '">Events</a></li>';
+        let navHtml = `
+            <nav class="navbar" role="navigation" aria-label="Main navigation">
+                <div class="container">
+                    <a href="/index.html" class="navbar-brand">EventHub</a>
+                    <button class="navbar-toggle" id="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+                    <ul class="navbar-nav" id="nav-menu">
+                        <li><a href="/index.html" class="${isActive('/index.html')}${isActive('/')}">Events</a></li>
+        `;
 
         if (currentUser) {
-            navHtml +=
-                        '<li><a href="/my-registrations.html" class="' + isActive('/my-registrations.html') + '">My Registrations</a></li>';
+            navHtml += `<li><a href="/my-registrations.html" class="${isActive('/my-registrations.html')}">My Registrations</a></li>`;
             if (currentUser.role === 'admin') {
-                navHtml +=
-                        '<li><a href="/admin.html" class="' + isActive('/admin.html') + '">Admin</a></li>';
+                navHtml += `<li><a href="/admin.html" class="${isActive('/admin.html')}">Admin</a></li>`;
             }
-            navHtml +=
-                        '<li><span class="user-badge">' + escapeHtml(currentUser.name) + '</span></li>' +
-                        '<li><button id="btn-logout" class="btn btn-ghost btn-sm">Logout</button></li>';
+            navHtml += `
+                        <li><span class="user-badge">${escapeHtml(currentUser.name)}</span></li>
+                        <li><button id="btn-logout" class="btn btn-ghost btn-sm">Logout</button></li>
+            `;
         } else {
-            navHtml +=
-                        '<li><a href="/login.html" class="' + isActive('/login.html') + '">Login</a></li>' +
-                        '<li><a href="/signup.html" class="btn btn-primary btn-sm">Sign Up</a></li>';
+            navHtml += `
+                        <li><a href="/login.html" class="${isActive('/login.html')}">Login</a></li>
+                        <li><a href="/signup.html" class="btn btn-primary btn-sm">Sign Up</a></li>
+            `;
         }
 
-        navHtml +=
-                    '</ul>' +
-                '</div>' +
-            '</nav>';
+        navHtml += `
+                    </ul>
+                </div>
+            </nav>
+        `;
 
-        const $existingNav = $('nav.navbar');
-        if ($existingNav.length) {
-            $existingNav.replaceWith(navHtml);
+        const existingNav = $('nav.navbar');
+        if (existingNav) {
+            existingNav.outerHTML = navHtml;
         } else {
-            $('body').prepend(navHtml);
+            document.body.insertAdjacentHTML('afterbegin', navHtml);
         }
 
-        // Mobile toggle
-        $('#nav-toggle').on('click', function () {
-            const $menu = $('#nav-menu');
-            $menu.toggleClass('open');
-            $(this).attr('aria-expanded', $menu.hasClass('open'));
+        $('#nav-toggle')?.addEventListener('click', function () {
+            const menu = $('#nav-menu');
+            if (menu) {
+                menu.classList.toggle('open');
+                this.setAttribute('aria-expanded', String(menu.classList.contains('open')));
+            }
         });
-
-        // Logout
-        $('#btn-logout').on('click', function () {
-            api('POST', '/api/logout.php').then(function () {
-                window.location.href = '/index.html';
-            });
+        $('#btn-logout')?.addEventListener('click', async () => {
+            await api('POST', '/api/logout.php');
+            window.location.href = '/index.html';
         });
     }
 
-    // ── Status Badge Helper ──────────────────────────────────────────
     function getStatusBadge(event) {
         if (event.user_registered) {
             return '<span class="badge badge-registered">✓ Registered</span>';
@@ -343,7 +337,6 @@ const App = (function ($) {
         return '<span class="badge badge-open">Open</span>';
     }
 
-    // ── Capacity Bar Helper ──────────────────────────────────────────
     function getCapacityBarClass(event) {
         const ratio = event.registered_count / event.capacity;
         if (ratio >= 1) return 'full';
@@ -352,49 +345,45 @@ const App = (function ($) {
         return 'low';
     }
 
-    // ── Redirect Safety ─────────────────────────────────────────────
     function safeRedirect(url) {
-        // Only allow same-origin relative paths
         if (!url || url.startsWith('//') || url.includes('://') || url.startsWith('\\')) {
             return '/index.html';
         }
         return url;
     }
 
-    // ── Init ─────────────────────────────────────────────────────────
-    function init(callback) {
-        // Fetch CSRF + check session in parallel
-        $.when(
-            fetchCsrf(),
-            $.ajax({ url: '/api/me.php', method: 'GET', dataType: 'json' })
-                .then(function (res) { return res.success ? res.data : null; })
-                .catch(function () { return null; }) // Not logged in is fine
-        ).then(function (token, user) {
-            currentUser = user;
-            buildNavbar();
-            if (typeof callback === 'function') {
-                callback(currentUser);
-            }
-        });
+    async function init(callback) {
+        const [, meRes] = await Promise.all([
+            ensureCsrf(),
+            fetch('/api/me.php', { headers: { 'Accept': 'application/json' } })
+                .then(r => r.json())
+                .catch(() => null)
+        ]);
+
+        currentUser = (meRes?.success && meRes.data) ? meRes.data : null;
+        buildNavbar();
+
+        if (typeof callback === 'function') {
+            callback(currentUser);
+        }
     }
 
-    // ── Public API ───────────────────────────────────────────────────
     return {
-        init: init,
-        api: api,
-        toast: toast,
+        init,
+        api,
+        toast,
         flash: toast,
-        confirm: confirm,
-        escapeHtml: escapeHtml,
-        formatDate: formatDate,
-        formatTime: formatTime,
-        formatDateTime: formatDateTime,
-        isoToDatetimeLocal: isoToDatetimeLocal,
-        truncate: truncate,
-        getStatusBadge: getStatusBadge,
-        getCapacityBarClass: getCapacityBarClass,
-        safeRedirect: safeRedirect,
+        confirm,
+        escapeHtml,
+        formatDate,
+        formatTime,
+        formatDateTime,
+        isoToDatetimeLocal,
+        truncate,
+        getStatusBadge,
+        getCapacityBarClass,
+        safeRedirect,
         get currentUser() { return currentUser; },
         get csrfToken() { return csrfToken; }
     };
-})(jQuery);
+})();

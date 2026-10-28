@@ -1,12 +1,5 @@
-/* ═══════════════════════════════════════════════════════════════════════
-   Event Registration Portal — Design System
-   Modern, responsive, dark-mode design with glassmorphism
-   ═══════════════════════════════════════════════════════════════════════ */
-
-/* ── Google Fonts ─────────────────────────────────────────────────────── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
-/* ── Custom Properties ────────────────────────────────────────────────── */
 :root {
     /* Colors */
     --bg-primary: #0a0e1a;
