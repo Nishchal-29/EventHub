@@ -1,10 +1,6 @@
 <?php
 declare(strict_types=1);
 
-/**
- * EventService — read/write operations for events.
- * Remaining seats are always computed, never stored as a counter.
- */
 class EventService
 {
     private PDO $db;
@@ -14,10 +10,6 @@ class EventService
         $this->db = $db;
     }
 
-    /**
-     * List events with filters, pagination, and per-user registration status.
-     * Single aggregated query with no N+1 problems.
-     */
     public function list(array $filters, ?int $userId = null): array
     {
         $where = [];
@@ -80,7 +72,6 @@ class EventService
         // Count total
         $countSql = "SELECT COUNT(*) FROM events e $whereClause";
         $countStmt = $this->db->prepare($countSql);
-        // Bind only non-user_id params for count
         $countParams = $params;
         unset($countParams['user_id']);
         $countStmt->execute($countParams);
@@ -139,9 +130,6 @@ class EventService
         ];
     }
 
-    /**
-     * Get a single event by ID with registration counts and user status.
-     */
     public function getById(int $id, ?int $userId = null): ?array
     {
         $userRegSelect = 'FALSE AS user_registered';
@@ -189,9 +177,6 @@ class EventService
         return $event;
     }
 
-    /**
-     * Create a new event (admin only).
-     */
     public function create(array $data, int $createdBy): array
     {
         $sql = "
@@ -213,15 +198,10 @@ class EventService
         return $this->getById($id);
     }
 
-    /**
-     * Update an existing event (admin only).
-     * Capacity cannot be reduced below current active registrations.
-     */
     public function update(int $id, array $data): array
     {
         $this->db->beginTransaction();
         try {
-            // Lock the event row
             $stmt = $this->db->prepare("SELECT id, capacity FROM events WHERE id = :id FOR UPDATE");
             $stmt->execute(['id' => $id]);
             $event = $stmt->fetch();
@@ -230,7 +210,6 @@ class EventService
                 json_error('NOT_FOUND', 'Event not found.', 404);
             }
 
-            // Check active registrations
             $stmt = $this->db->prepare("SELECT COUNT(*) FROM registrations WHERE event_id = :id AND status = 'active'");
             $stmt->execute(['id' => $id]);
             $activeCount = (int) $stmt->fetchColumn();
@@ -273,9 +252,6 @@ class EventService
         }
     }
 
-    /**
-     * Delete an event (admin only). Cascade removes registrations.
-     */
     public function delete(int $id): void
     {
         $stmt = $this->db->prepare("DELETE FROM events WHERE id = :id");
@@ -285,9 +261,6 @@ class EventService
         }
     }
 
-    /**
-     * Get distinct categories for filter dropdown.
-     */
     public function getCategories(): array
     {
         $stmt = $this->db->query("SELECT DISTINCT category FROM events WHERE category IS NOT NULL AND category != '' ORDER BY category");
