@@ -1,107 +1,68 @@
 'use strict';
 
 (() => {
-    on('click', '.password-toggle', function () {
-        const input = this.closest('.password-wrapper')?.querySelector('.form-input') || this.parentElement.querySelector('.form-input');
-        if (!input) return;
-        const isPassword = input.type === 'password';
-        input.type = isPassword ? 'text' : 'password';
-        this.textContent = isPassword ? 'Hide' : 'Show';
-    });
+    const SIGNUP_RULES = {
+        name: [
+            { test: v => v.length >= 2, msg: 'Name must be at least 2 characters.' },
+            { test: v => v.length <= 100, msg: 'Name must be at most 100 characters.' }
+        ],
+        email: [
+            { test: v => v.length > 0, msg: 'Email is required.' },
+            { test: v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), msg: 'Please enter a valid email address.' }
+        ],
+        password: [
+            { test: v => v.length >= 8, msg: 'Password must be at least 8 characters.' },
+            { test: v => /[A-Za-z]/.test(v), msg: 'Password must contain at least one letter.' },
+            { test: v => /[0-9]/.test(v), msg: 'Password must contain at least one number.' }
+        ]
+    };
 
-    function clearErrors(form) {
-        form.querySelectorAll('.form-error').forEach(el => {
-            el.classList.remove('visible');
-            el.textContent = '';
-        });
-        form.querySelectorAll('.form-input').forEach(el => el.classList.remove('error'));
-    }
+    const LOGIN_RULES = {
+        email: [{ test: v => v.length > 0, msg: 'Email is required.' }],
+        password: [{ test: v => v.length > 0, msg: 'Password is required.' }]
+    };
 
-    function showFieldError(form, field, message) {
-        const input = form.querySelector(`[name="${field}"]`);
-        if (input) {
-            input.classList.add('error');
-            const err = input.closest('.form-group')?.querySelector('.form-error');
-            if (err) {
-                err.classList.add('visible');
-                err.textContent = message;
+    function validate(form, rulesTable) {
+        App.clearFieldErrors(form);
+        const errors = {};
+        Object.entries(rulesTable).forEach(([field, rules]) => {
+            const raw = form.querySelector(`[name="${field}"]`)?.value || '';
+            const val = (field === 'password') ? raw : raw.trim();
+            for (const r of rules) {
+                if (!r.test(val)) {
+                    errors[field] = r.msg;
+                    break;
+                }
             }
+        });
+
+        if (Object.keys(errors).length > 0) {
+            App.showFieldErrors(form, errors);
+            return false;
         }
-    }
-
-    function showServerErrors(form, errors) {
-        if (errors && typeof errors === 'object') {
-            Object.entries(errors).forEach(([field, msg]) => showFieldError(form, field, msg));
-        }
-    }
-
-    function validateSignup(form) {
-        clearErrors(form);
-        let valid = true;
-        const name = form.querySelector('[name="name"]')?.value.trim() || '';
-        const email = form.querySelector('[name="email"]')?.value.trim() || '';
-        const password = form.querySelector('[name="password"]')?.value || '';
-
-        if (name.length < 2) {
-            showFieldError(form, 'name', 'Name must be at least 2 characters.');
-            valid = false;
-        } else if (name.length > 100) {
-            showFieldError(form, 'name', 'Name must be at most 100 characters.');
-            valid = false;
-        }
-
-        if (!email) {
-            showFieldError(form, 'email', 'Email is required.');
-            valid = false;
-        } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-            showFieldError(form, 'email', 'Please enter a valid email address.');
-            valid = false;
-        }
-
-        if (password.length < 8) {
-            showFieldError(form, 'password', 'Password must be at least 8 characters.');
-            valid = false;
-        } else if (!/[A-Za-z]/.test(password)) {
-            showFieldError(form, 'password', 'Password must contain at least one letter.');
-            valid = false;
-        } else if (!/[0-9]/.test(password)) {
-            showFieldError(form, 'password', 'Password must contain at least one number.');
-            valid = false;
-        }
-
-        return valid;
-    }
-
-    function validateLogin(form) {
-        clearErrors(form);
-        let valid = true;
-        const email = form.querySelector('[name="email"]')?.value.trim() || '';
-        const password = form.querySelector('[name="password"]')?.value || '';
-
-        if (!email) {
-            showFieldError(form, 'email', 'Email is required.');
-            valid = false;
-        }
-        if (!password) {
-            showFieldError(form, 'password', 'Password is required.');
-            valid = false;
-        }
-
-        return valid;
+        return true;
     }
 
     function getRedirectUrl() {
         const next = new URLSearchParams(window.location.search).get('next');
-        return App.safeRedirect(next) || '/index.html';
+        return App.safeRedirect(next);
     }
+
+    on('click', '.password-toggle', function () {
+        const input = this.closest('.password-wrapper')?.querySelector('.form-input');
+        if (!input) return;
+        const isPw = input.type === 'password';
+        input.type = isPw ? 'text' : 'password';
+        this.textContent = isPw ? 'Hide' : 'Show';
+    });
 
     on('submit', '#signup-form', async function (e) {
         e.preventDefault();
         const form = this;
-        if (!validateSignup(form)) return;
+        if (!validate(form, SIGNUP_RULES)) return;
 
         const btn = form.querySelector('[type="submit"]');
-        const originalText = btn.textContent;
+        const origText = btn.textContent;
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-inline"></span> Creating account...';
 
@@ -115,13 +76,13 @@
             setTimeout(() => { window.location.href = getRedirectUrl(); }, 500);
         } catch (res) {
             btn.disabled = false;
-            btn.textContent = originalText;
-            clearErrors(form);
+            btn.textContent = origText;
+            App.clearFieldErrors(form);
             if (res?.error) {
                 if (res.error.fields) {
-                    showServerErrors(form, res.error.fields);
+                    App.showFieldErrors(form, res.error.fields);
                 } else if (res.error.code === 'DUPLICATE') {
-                    showFieldError(form, 'email', res.error.message);
+                    App.showFieldErrors(form, { email: res.error.message });
                 } else {
                     App.toast('error', res.error.message);
                 }
@@ -132,10 +93,10 @@
     on('submit', '#login-form', async function (e) {
         e.preventDefault();
         const form = this;
-        if (!validateLogin(form)) return;
+        if (!validate(form, LOGIN_RULES)) return;
 
         const btn = form.querySelector('[type="submit"]');
-        const originalText = btn.textContent;
+        const origText = btn.textContent;
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-inline"></span> Logging in...';
 
@@ -148,22 +109,16 @@
             setTimeout(() => { window.location.href = getRedirectUrl(); }, 500);
         } catch (res) {
             btn.disabled = false;
-            btn.textContent = originalText;
-            clearErrors(form);
+            btn.textContent = origText;
+            App.clearFieldErrors(form);
             if (res?.error) {
                 if (res.error.code === 'INVALID_CREDENTIALS') {
-                    showFieldError(form, 'password', res.error.message || 'Invalid email or password.');
-                    App.toast('error', res.error.message || 'Invalid email or password.');
-                } else if (res.error.code === 'RATE_LIMITED') {
-                    showFieldError(form, 'password', res.error.message);
-                    App.toast('error', res.error.message);
+                    App.showFieldErrors(form, { password: res.error.message || 'Invalid email or password.' });
                 } else if (res.error.fields) {
-                    showServerErrors(form, res.error.fields);
-                } else {
-                    App.toast('error', res.error.message || 'Login failed. Please check your credentials.');
+                    App.showFieldErrors(form, res.error.fields);
+                } else if (res.error.code !== 'RATE_LIMITED') {
+                    App.toast('error', res.error.message || 'Login failed.');
                 }
-            } else {
-                App.toast('error', 'Login failed. Please check your credentials.');
             }
         }
     });

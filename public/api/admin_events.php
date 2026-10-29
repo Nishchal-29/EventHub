@@ -1,13 +1,11 @@
 <?php
 declare(strict_types=1);
 require_once dirname(__DIR__, 2) . '/includes/bootstrap.php';
-require_once dirname(__DIR__, 2) . '/includes/csrf.php';
 require_once dirname(__DIR__, 2) . '/includes/auth.php';
 require_once dirname(__DIR__, 2) . '/includes/validator.php';
 require_once dirname(__DIR__, 2) . '/includes/services/EventService.php';
 
 require_method('POST');
-csrf_verify();
 $user = require_admin();
 
 $data = get_json_body();
