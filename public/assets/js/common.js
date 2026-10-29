@@ -10,8 +10,6 @@ const on = (evt, sel, fn, root = document) => {
 };
 
 const App = (() => {
-    let csrfToken = null;
-    let csrfPromise = null;
     let currentUser = null;
     let toastContainer = null;
 
@@ -22,101 +20,64 @@ const App = (() => {
         return div.innerHTML;
     }
 
-    function formatDate(iso) {
+    function formatDateTime(iso) {
+        if (!iso) return '';
         const d = new Date(iso);
-        return d.toLocaleDateString(undefined, {
+        const date = d.toLocaleDateString(undefined, {
             weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
         });
-    }
-
-    function formatTime(iso) {
-        const d = new Date(iso);
-        return d.toLocaleTimeString(undefined, {
-            hour: '2-digit', minute: '2-digit'
-        });
-    }
-
-    function formatDateTime(iso) {
-        return `${formatDate(iso)} at ${formatTime(iso)}`;
+        const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        return `${date} at ${time}`;
     }
 
     function isoToDatetimeLocal(iso) {
+        if (!iso) return '';
         const d = new Date(iso);
         const pad = n => String(n).padStart(2, '0');
         return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
 
     function truncate(str, len) {
-        if (!str) return '';
-        return str.length > len ? str.substring(0, len) + '…' : str;
+        return (str && str.length > len) ? str.substring(0, len) + '…' : (str || '');
     }
 
-    async function fetchCsrf() {
-        try {
-            const res = await fetch('/api/csrf.php', { cache: 'no-store' });
-            const json = await res.json();
-            if (json?.success && json.data?.token) {
-                csrfToken = json.data.token;
-            }
-        } catch {
-            csrfToken = null;
-        }
-        csrfPromise = null;
-        return csrfToken;
-    }
-
-    function ensureCsrf() {
-        if (csrfToken) return Promise.resolve(csrfToken);
-        if (!csrfPromise) csrfPromise = fetchCsrf();
-        return csrfPromise;
+    function safeRedirect(url) {
+        return (typeof url === 'string' && /^\/(?![\/\\])[^\r\n]*$/.test(url)) ? url : '/index.html';
     }
 
     async function api(method, url, data) {
         const upper = method.toUpperCase();
-        if (upper !== 'GET' && !csrfToken) {
-            await ensureCsrf();
-        }
-
         let fetchUrl = url;
-        const opts = {
-            method: upper,
-            headers: { 'Accept': 'application/json' }
-        };
+        const opts = { method: upper, headers: { 'Accept': 'application/json' } };
 
-        if (csrfToken) {
-            opts.headers['X-CSRF-Token'] = csrfToken;
-        }
-
-        if (data) {
-            if (upper === 'GET') {
+        if (upper === 'GET') {
+            if (data) {
                 const params = new URLSearchParams();
                 Object.entries(data).forEach(([k, v]) => {
                     if (v !== undefined && v !== null && v !== '') params.append(k, v);
                 });
                 const qs = params.toString();
                 if (qs) fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + qs;
-            } else {
-                opts.headers['Content-Type'] = 'application/json; charset=utf-8';
-                opts.body = JSON.stringify(data);
             }
+        } else {
+            opts.headers['Content-Type'] = 'application/json';
+            opts.body = JSON.stringify(data || {});
         }
 
         let response, json;
         try {
             response = await fetch(fetchUrl, opts);
             json = await response.json().catch(() => null);
-        } catch (err) {
+        } catch {
             toast('error', 'Network error. Please check your connection.');
             return Promise.reject({ success: false, error: { code: 'NETWORK_ERROR', message: 'Network error.' } });
         }
 
-        if (response.ok && json?.success) {
-            return json;
-        }
+        if (response.ok && json?.success) return json;
 
         const res = json || {
             success: false,
-            error: { code: 'UNKNOWN', message: 'An unexpected error occurred.' }
+            error: { code: 'SERVER_ERROR', message: 'Server error. Please try again later.' }
         };
 
         const status = response.status;
@@ -126,22 +87,17 @@ const App = (() => {
                 window.location.href = `/login.html?next=${next}`;
             }
         } else if (status === 403) {
-            if (res.error?.code === 'CSRF_FAILURE') {
-                csrfToken = null;
-                toast('error', 'Security token refreshed. Please try again.');
-            } else {
-                toast('error', res.error?.message || 'Access denied.');
-            }
+            toast('error', res.error?.message || 'Access denied.');
         } else if (status === 429) {
             toast('error', res.error?.message || 'Too many requests. Please wait.');
         } else if (status >= 500) {
-            toast('error', 'Server error. Please try again later.');
+            toast('error', res.error?.message || 'Server error. Please try again later.');
         }
 
         return Promise.reject(res);
     }
 
-    function ensureToastContainer() {
+    function toast(type, message) {
         if (!toastContainer || !document.body.contains(toastContainer)) {
             toastContainer = document.createElement('div');
             toastContainer.className = 'toast-container';
@@ -149,121 +105,232 @@ const App = (() => {
             toastContainer.setAttribute('role', 'status');
             document.body.appendChild(toastContainer);
         }
-    }
-
-    function showInPageAlert(type, message) {
-        let flashContainer = $('#flash-container');
-        if (!flashContainer) {
-            const target = $('.main-content .container');
-            if (target) {
-                flashContainer = document.createElement('div');
-                flashContainer.id = 'flash-container';
-                flashContainer.className = 'flash-container';
-                target.prepend(flashContainer);
-            }
-        }
-
-        if (!flashContainer) return;
-
-        const icons = { success: '✓', error: '✕', info: 'ℹ' };
-        const alert = document.createElement('div');
-        alert.className = `alert alert-${escapeHtml(type)}`;
-        alert.setAttribute('role', 'alert');
-        alert.innerHTML = `
-            <span class="alert-icon">${icons[type] || 'ℹ'}</span>
-            <span class="alert-message"></span>
-            <button type="button" class="alert-close" aria-label="Close">×</button>
-        `;
-        alert.querySelector('.alert-message').textContent = message;
-
-        const removeAlert = () => {
-            alert.classList.add('removing');
-            setTimeout(() => alert.remove(), 250);
-        };
-
-        alert.querySelector('.alert-close').addEventListener('click', removeAlert);
-        flashContainer.innerHTML = '';
-        flashContainer.appendChild(alert);
-
-        setTimeout(() => {
-            if (document.body.contains(alert) && !alert.classList.contains('removing')) {
-                removeAlert();
-            }
-        }, 6000);
-    }
-
-    function toast(type, message) {
-        showInPageAlert(type, message);
-        ensureToastContainer();
 
         const icons = { success: '✓', error: '✕', info: 'ℹ' };
         const el = document.createElement('div');
-        el.className = `toast toast-${escapeHtml(type)}`;
-        el.innerHTML = `
-            <span class="toast-icon">${icons[type] || 'ℹ'}</span>
-            <span class="toast-message"></span>
-            <button class="toast-close" aria-label="Close">×</button>
-        `;
-        el.querySelector('.toast-message').textContent = message;
+        el.className = `toast toast-${type}`;
 
-        const removeToast = () => {
+        const icon = document.createElement('span');
+        icon.className = 'toast-icon';
+        icon.textContent = icons[type] || 'ℹ';
+
+        const msg = document.createElement('span');
+        msg.className = 'toast-message';
+        msg.textContent = message;
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'toast-close';
+        closeBtn.setAttribute('aria-label', 'Close');
+        closeBtn.textContent = '×';
+
+        el.append(icon, msg, closeBtn);
+
+        const remove = () => {
             if (el.classList.contains('removing')) return;
             el.classList.add('removing');
             setTimeout(() => el.remove(), 250);
         };
 
-        el.querySelector('.toast-close').addEventListener('click', removeToast);
+        closeBtn.addEventListener('click', remove);
         toastContainer.appendChild(el);
-        setTimeout(removeToast, 5000);
+        setTimeout(remove, 5000);
+    }
+
+    function modal({ title, body, buttons = [], modalClass = '', overlayClass = '', footerClass = '' }) {
+        const overlay = document.createElement('div');
+        const extraOverlay = [
+            overlayClass,
+            modalClass.includes('ticket-modal') ? 'ticket-modal-overlay' : ''
+        ].filter(Boolean).join(' ');
+        overlay.className = `modal-overlay ${extraOverlay}`.trim();
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+
+        const box = document.createElement('div');
+        box.className = `modal ${modalClass}`.trim();
+
+        if (title) {
+            const header = document.createElement('div');
+            header.className = 'modal-header';
+            const h2 = document.createElement('h2');
+            h2.textContent = title;
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'modal-close';
+            closeBtn.setAttribute('aria-label', 'Close');
+            closeBtn.textContent = '×';
+            header.append(h2, closeBtn);
+            box.appendChild(header);
+        }
+
+        const bodyWrap = document.createElement('div');
+        bodyWrap.className = 'modal-body';
+        if (typeof body === 'string') bodyWrap.innerHTML = body;
+        else if (body instanceof Node) bodyWrap.appendChild(body);
+        box.appendChild(bodyWrap);
+
+        if (buttons.length > 0) {
+            const footer = document.createElement('div');
+            const extraFooter = [
+                footerClass,
+                modalClass.includes('ticket-modal') ? 'ticket-footer' : ''
+            ].filter(Boolean).join(' ');
+            footer.className = `modal-footer ${extraFooter}`.trim();
+            buttons.forEach(b => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = `btn ${b.class || 'btn-outline'}`.trim();
+                btn.textContent = b.text || '';
+                btn.addEventListener('click', () => (b.onClick ? b.onClick(close) : close()));
+                footer.appendChild(btn);
+            });
+            box.appendChild(footer);
+        }
+
+        overlay.appendChild(box);
+
+        const onKeyDown = e => { if (e.key === 'Escape') close(); };
+        function close() {
+            document.removeEventListener('keydown', onKeyDown);
+            overlay.classList.add('removing');
+            setTimeout(() => overlay.remove(), 200);
+        }
+
+        box.querySelectorAll('.modal-close').forEach(b => b.addEventListener('click', close));
+        overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+        document.addEventListener('keydown', onKeyDown);
+
+        document.body.appendChild(overlay);
+        const focusEl = box.querySelector('input:not([disabled]), select:not([disabled]), button.btn-confirm, button.btn-primary, button.modal-close') || overlay;
+        focusEl.focus();
+
+        return { overlay, modalBox: box, bodyContainer: bodyWrap, close };
     }
 
     function confirm(title, message, confirmText = 'Confirm', confirmClass = 'btn-danger') {
         return new Promise(resolve => {
-            const overlay = document.createElement('div');
-            overlay.className = 'modal-overlay';
-            overlay.setAttribute('role', 'dialog');
-            overlay.setAttribute('aria-modal', 'true');
-            overlay.innerHTML = `
-                <div class="modal">
-                    <div class="modal-header">
-                        <h2></h2>
-                        <button class="modal-close" aria-label="Close">×</button>
-                    </div>
-                    <div class="modal-body"><p></p></div>
-                    <div class="modal-footer">
-                        <button class="btn btn-outline btn-cancel">Cancel</button>
-                        <button class="btn ${escapeHtml(confirmClass)} btn-confirm"></button>
-                    </div>
-                </div>
-            `;
+            const p = document.createElement('p');
+            p.textContent = message;
+            let confirmed = false;
 
-            overlay.querySelector('.modal-header h2').textContent = title;
-            overlay.querySelector('.modal-body p').textContent = message;
-            const confirmBtn = overlay.querySelector('.btn-confirm');
-            confirmBtn.textContent = confirmText;
-
-            const close = result => {
-                document.removeEventListener('keydown', onKeyDown);
-                overlay.classList.add('removing');
-                setTimeout(() => overlay.remove(), 200);
-                resolve(result);
-            };
+            const m = modal({
+                title,
+                body: p,
+                buttons: [
+                    { text: 'Cancel', class: 'btn-outline btn-cancel', onClick: close => { close(); resolve(false); } },
+                    { text: confirmText, class: `${confirmClass} btn-confirm`, onClick: close => { confirmed = true; close(); resolve(true); } }
+                ]
+            });
 
             const onKeyDown = e => {
-                if (e.key === 'Escape') close(false);
+                if (e.key === 'Enter') {
+                    if (document.activeElement && document.activeElement.classList.contains('btn-cancel')) {
+                        return;
+                    }
+                    e.preventDefault();
+                    confirmed = true;
+                    m.close();
+                    resolve(true);
+                }
             };
-
-            overlay.querySelector('.btn-confirm').addEventListener('click', () => close(true));
-            overlay.querySelector('.btn-cancel').addEventListener('click', () => close(false));
-            overlay.querySelector('.modal-close').addEventListener('click', () => close(false));
-            overlay.addEventListener('click', e => {
-                if (e.target === overlay) close(false);
-            });
             document.addEventListener('keydown', onKeyDown);
 
-            document.body.appendChild(overlay);
-            confirmBtn.focus();
+            const origClose = m.close;
+            m.close = () => {
+                document.removeEventListener('keydown', onKeyDown);
+                origClose();
+                if (!confirmed) resolve(false);
+            };
         });
+    }
+
+    function actionButton(event, size = 'sm') {
+        const isLg = size === 'lg';
+        const sz = isLg ? 'btn-lg' : 'btn-sm';
+        const regClass = isLg ? 'btn-register-detail' : 'btn-register';
+        const cancelClass = isLg ? 'btn-cancel-detail' : 'btn-cancel-reg';
+
+        if (event.status === 'past') {
+            return `<button class="btn btn-full-disabled ${sz}" disabled>Event Ended</button>`;
+        }
+        if (event.user_registered) {
+            return `<button class="btn btn-danger ${sz} ${cancelClass}" data-event-id="${event.id}">Cancel Registration</button>`;
+        }
+        if (event.status === 'full') {
+            const label = isLg ? 'Full — No Seats Available' : 'Full';
+            return `<button class="btn btn-full-disabled ${sz}" disabled>${label}</button>`;
+        }
+        const label = isLg ? 'Register for This Event' : 'Register';
+        return `<button class="btn btn-primary ${sz} ${regClass}" data-event-id="${event.id}">${label}</button>`;
+    }
+
+    function poll(fn, ms = 5000) {
+        let timer = null, running = false, stopped = false;
+
+        async function tick() {
+            if (stopped || running || document.hidden) return;
+            running = true;
+            try { await fn(); } finally { running = false; }
+        }
+
+        function start() { if (!stopped && !timer) timer = setInterval(tick, ms); }
+        function pause() { if (timer) { clearInterval(timer); timer = null; } }
+
+        function onVisibility() {
+            if (document.hidden) pause();
+            else if (!stopped) { tick(); start(); }
+        }
+
+        document.addEventListener('visibilitychange', onVisibility);
+        start();
+
+        return function stop() {
+            stopped = true;
+            pause();
+            document.removeEventListener('visibilitychange', onVisibility);
+        };
+    }
+
+    function clearFieldErrors(root) {
+        if (!root) return;
+        root.querySelectorAll('.form-error').forEach(el => {
+            el.classList.remove('visible');
+            el.textContent = '';
+        });
+        root.querySelectorAll('.form-input').forEach(el => el.classList.remove('error'));
+    }
+
+    function showFieldErrors(root, fields) {
+        if (!root || !fields) return;
+        Object.entries(fields).forEach(([field, msg]) => {
+            if (!msg) return;
+            const input = root.querySelector(`[name="${field}"]`) || root.querySelector(`#ef-${field}`);
+            if (input) input.classList.add('error');
+
+            const err = root.querySelector(`#err-${field}`) ||
+                        input?.closest('.form-group')?.querySelector('.form-error');
+            if (err) {
+                err.textContent = msg;
+                err.classList.add('visible');
+            }
+        });
+    }
+
+    function getStatusBadge(event) {
+        if (event.user_registered) return '<span class="badge badge-registered">✓ Registered</span>';
+        if (event.status === 'past') return '<span class="badge badge-past">Past</span>';
+        if (event.status === 'full') return '<span class="badge badge-full">Full</span>';
+        if (event.remaining_seats <= 3 || (event.remaining_seats / event.capacity) <= 0.1) {
+            return '<span class="badge badge-few-seats">Few Seats Left</span>';
+        }
+        return '<span class="badge badge-open">Open</span>';
+    }
+
+    function getCapacityBarClass(event) {
+        const ratio = event.registered_count / event.capacity;
+        if (ratio >= 1) return 'full';
+        if (ratio >= 0.9) return 'high';
+        if (ratio >= 0.6) return 'medium';
+        return 'low';
     }
 
     function buildNavbar() {
@@ -281,32 +348,23 @@ const App = (() => {
 
         if (currentUser) {
             navHtml += `<li><a href="/my-registrations.html" class="${isActive('/my-registrations.html')}">My Registrations</a></li>`;
-            if (currentUser.role === 'admin') {
-                navHtml += `<li><a href="/admin.html" class="${isActive('/admin.html')}">Admin</a></li>`;
-            }
+            if (currentUser.role === 'admin') navHtml += `<li><a href="/admin.html" class="${isActive('/admin.html')}">Admin</a></li>`;
             navHtml += `
-                        <li><span class="user-badge">${escapeHtml(currentUser.name)}</span></li>
-                        <li><button id="btn-logout" class="btn btn-ghost btn-sm">Logout</button></li>
+                <li><span class="user-badge">${escapeHtml(currentUser.name)}</span></li>
+                <li><button id="btn-logout" class="btn btn-ghost btn-sm">Logout</button></li>
             `;
         } else {
             navHtml += `
-                        <li><a href="/login.html" class="${isActive('/login.html')}">Login</a></li>
-                        <li><a href="/signup.html" class="btn btn-primary btn-sm">Sign Up</a></li>
+                <li><a href="/login.html" class="${isActive('/login.html')}">Login</a></li>
+                <li><a href="/signup.html" class="btn btn-primary btn-sm">Sign Up</a></li>
             `;
         }
 
-        navHtml += `
-                    </ul>
-                </div>
-            </nav>
-        `;
+        navHtml += `</ul></div></nav>`;
 
         const existingNav = $('nav.navbar');
-        if (existingNav) {
-            existingNav.outerHTML = navHtml;
-        } else {
-            document.body.insertAdjacentHTML('afterbegin', navHtml);
-        }
+        if (existingNav) existingNav.outerHTML = navHtml;
+        else document.body.insertAdjacentHTML('afterbegin', navHtml);
 
         $('#nav-toggle')?.addEventListener('click', function () {
             const menu = $('#nav-menu');
@@ -315,75 +373,31 @@ const App = (() => {
                 this.setAttribute('aria-expanded', String(menu.classList.contains('open')));
             }
         });
+
         $('#btn-logout')?.addEventListener('click', async () => {
             await api('POST', '/api/logout.php');
             window.location.href = '/index.html';
         });
     }
 
-    function getStatusBadge(event) {
-        if (event.user_registered) {
-            return '<span class="badge badge-registered">✓ Registered</span>';
-        }
-        if (event.status === 'past') {
-            return '<span class="badge badge-past">Past</span>';
-        }
-        if (event.status === 'full') {
-            return '<span class="badge badge-full">Full</span>';
-        }
-        if (event.remaining_seats <= 3 || (event.remaining_seats / event.capacity) <= 0.1) {
-            return '<span class="badge badge-few-seats">Few Seats Left</span>';
-        }
-        return '<span class="badge badge-open">Open</span>';
-    }
-
-    function getCapacityBarClass(event) {
-        const ratio = event.registered_count / event.capacity;
-        if (ratio >= 1) return 'full';
-        if (ratio >= 0.9) return 'high';
-        if (ratio >= 0.6) return 'medium';
-        return 'low';
-    }
-
-    function safeRedirect(url) {
-        if (!url || url.startsWith('//') || url.includes('://') || url.startsWith('\\')) {
-            return '/index.html';
-        }
-        return url;
-    }
-
     async function init(callback) {
-        const [, meRes] = await Promise.all([
-            ensureCsrf(),
-            fetch('/api/me.php', { headers: { 'Accept': 'application/json' } })
-                .then(r => r.json())
-                .catch(() => null)
-        ]);
-
-        currentUser = (meRes?.success && meRes.data) ? meRes.data : null;
-        buildNavbar();
-
-        if (typeof callback === 'function') {
-            callback(currentUser);
+        try {
+            const res = await fetch('/api/me.php', { headers: { 'Accept': 'application/json' } });
+            const json = await res.json().catch(() => null);
+            currentUser = (json?.success && json.data) ? json.data : null;
+        } catch {
+            currentUser = null;
         }
+
+        buildNavbar();
+        if (typeof callback === 'function') callback(currentUser);
     }
 
     return {
-        init,
-        api,
-        toast,
-        flash: toast,
-        confirm,
-        escapeHtml,
-        formatDate,
-        formatTime,
-        formatDateTime,
-        isoToDatetimeLocal,
-        truncate,
-        getStatusBadge,
-        getCapacityBarClass,
-        safeRedirect,
-        get currentUser() { return currentUser; },
-        get csrfToken() { return csrfToken; }
+        init, api, toast, modal, confirm, actionButton, poll,
+        showFieldErrors, clearFieldErrors, formatDateTime,
+        isoToDatetimeLocal, truncate, getStatusBadge,
+        getCapacityBarClass, safeRedirect, escapeHtml,
+        get currentUser() { return currentUser; }
     };
 })();

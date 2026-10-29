@@ -48,8 +48,6 @@ class RegistrationService
                 json_error('FULL', 'This event is full. No seats remaining.', 409);
             }
 
-            // usleep(300000);
-
             $stmt = $this->db->prepare(
                 "INSERT INTO registrations (event_id, user_id, status) VALUES (:event_id, :user_id, 'active')"
             );

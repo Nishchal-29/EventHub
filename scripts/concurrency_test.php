@@ -15,31 +15,27 @@ echo "========================================\n\n";
 
 $allPassed = true;
 
+function extractCookies(string $headers): string
+{
+    preg_match_all('/Set-Cookie:\s*([^;\r\n]+)/i', $headers, $matches);
+    $cookies = [];
+    foreach ($matches[1] ?? [] as $part) {
+        $eq = strpos($part, '=');
+        if ($eq !== false) {
+            $name = trim(substr($part, 0, $eq));
+            $val = trim(substr($part, $eq + 1));
+            $cookies[$name] = $val;
+        }
+    }
+    $cookieStr = [];
+    foreach ($cookies as $name => $val) {
+        $cookieStr[] = "$name=$val";
+    }
+    return implode('; ', $cookieStr);
+}
+
 function createTestUser(string $baseUrl, string $email, string $name, string $password): ?array
 {
-    $ch = curl_init("$baseUrl/api/csrf.php");
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HEADER => true,
-        CURLOPT_HTTPHEADER => ['Accept: application/json'],
-    ]);
-    $response = curl_exec($ch);
-    $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-    $headers = substr($response, 0, $headerSize);
-    $body = substr($response, $headerSize);
-    curl_close($ch);
-
-    preg_match_all('/Set-Cookie:\s*([^;\r\n]+)/i', $headers, $matches);
-    $cookies = implode('; ', $matches[1] ?? []);
-
-    $data = json_decode($body, true);
-    $csrfToken = $data['data']['token'] ?? '';
-
-    if (!$csrfToken) {
-        echo "  [ERROR] Failed to get CSRF token for $email\n";
-        return null;
-    }
-
     $ch = curl_init("$baseUrl/api/signup.php");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -47,8 +43,7 @@ function createTestUser(string $baseUrl, string $email, string $name, string $pa
         CURLOPT_POSTFIELDS => json_encode(['name' => $name, 'email' => $email, 'password' => $password]),
         CURLOPT_HTTPHEADER => [
             'Content-Type: application/json',
-            'X-CSRF-Token: ' . $csrfToken,
-            'Cookie: ' . $cookies,
+            'Accept: application/json',
         ],
         CURLOPT_HEADER => true,
     ]);
@@ -59,53 +54,14 @@ function createTestUser(string $baseUrl, string $email, string $name, string $pa
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    preg_match_all('/Set-Cookie:\s*([^;\r\n]+)/i', $headers, $matches);
-    if (!empty($matches[1])) {
-        $cookies = implode('; ', $matches[1]);
-    }
+    $cookies = extractCookies($headers);
 
     $result = json_decode($body, true);
     if ($httpCode === 201 || ($httpCode === 409 && ($result['error']['code'] ?? '') === 'DUPLICATE')) {
         if ($httpCode === 409) {
-            $ch = curl_init("$baseUrl/api/csrf.php");
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_HEADER => true,
-                CURLOPT_HTTPHEADER => ['Cookie: ' . $cookies],
-            ]);
-            $response = curl_exec($ch);
-            $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-            $headers = substr($response, 0, $headerSize);
-            $body = substr($response, $headerSize);
-            curl_close($ch);
-
-            preg_match_all('/Set-Cookie:\s*([^;\r\n]+)/i', $headers, $matches);
-            if (!empty($matches[1])) $cookies = implode('; ', $matches[1]);
-            $data = json_decode($body, true);
-            $csrfToken = $data['data']['token'] ?? '';
-
-            $ch = curl_init("$baseUrl/api/login.php");
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_POST => true,
-                CURLOPT_POSTFIELDS => json_encode(['email' => $email, 'password' => $password]),
-                CURLOPT_HTTPHEADER => [
-                    'Content-Type: application/json',
-                    'X-CSRF-Token: ' . $csrfToken,
-                    'Cookie: ' . $cookies,
-                ],
-                CURLOPT_HEADER => true,
-            ]);
-            $response = curl_exec($ch);
-            $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-            $headers = substr($response, 0, $headerSize);
-            curl_close($ch);
-
-            preg_match_all('/Set-Cookie:\s*([^;\r\n]+)/i', $headers, $matches);
-            if (!empty($matches[1])) $cookies = implode('; ', $matches[1]);
+            return loginUser($baseUrl, $email, $password);
         }
-
-        return ['cookies' => $cookies, 'csrf' => $csrfToken];
+        return ['cookies' => $cookies];
     }
 
     echo "  [ERROR] Failed to create user $email (HTTP $httpCode): $body\n";
@@ -114,22 +70,6 @@ function createTestUser(string $baseUrl, string $email, string $name, string $pa
 
 function loginUser(string $baseUrl, string $email, string $password): ?array
 {
-    $ch = curl_init("$baseUrl/api/csrf.php");
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HEADER => true,
-    ]);
-    $response = curl_exec($ch);
-    $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-    $headers = substr($response, 0, $headerSize);
-    $body = substr($response, $headerSize);
-    curl_close($ch);
-
-    preg_match_all('/Set-Cookie:\s*([^;\r\n]+)/i', $headers, $matches);
-    $cookies = implode('; ', $matches[1] ?? []);
-    $data = json_decode($body, true);
-    $csrfToken = $data['data']['token'] ?? '';
-
     $ch = curl_init("$baseUrl/api/login.php");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
@@ -137,8 +77,7 @@ function loginUser(string $baseUrl, string $email, string $password): ?array
         CURLOPT_POSTFIELDS => json_encode(['email' => $email, 'password' => $password]),
         CURLOPT_HTTPHEADER => [
             'Content-Type: application/json',
-            'X-CSRF-Token: ' . $csrfToken,
-            'Cookie: ' . $cookies,
+            'Accept: application/json',
         ],
         CURLOPT_HEADER => true,
     ]);
@@ -149,11 +88,10 @@ function loginUser(string $baseUrl, string $email, string $password): ?array
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    preg_match_all('/Set-Cookie:\s*([^;\r\n]+)/i', $headers, $matches);
-    if (!empty($matches[1])) $cookies = implode('; ', $matches[1]);
+    $cookies = extractCookies($headers);
 
     if ($httpCode === 200) {
-        return ['cookies' => $cookies, 'csrf' => $csrfToken];
+        return ['cookies' => $cookies];
     }
 
     echo "  [ERROR] Login failed for $email (HTTP $httpCode): $body\n";
@@ -173,7 +111,7 @@ function fireConcurrentRegistrations(string $baseUrl, array $sessions, int $even
             CURLOPT_POSTFIELDS => json_encode(['event_id' => $eventId]),
             CURLOPT_HTTPHEADER => [
                 'Content-Type: application/json',
-                'X-CSRF-Token: ' . $session['csrf'],
+                'Accept: application/json',
                 'Cookie: ' . $session['cookies'],
             ],
         ]);
@@ -201,25 +139,6 @@ function fireConcurrentRegistrations(string $baseUrl, array $sessions, int $even
 
     curl_multi_close($mh);
     return $results;
-}
-
-function cleanupRegistrations(string $baseUrl, array $sessions, int $eventId): void
-{
-    foreach ($sessions as $session) {
-        $ch = curl_init("$baseUrl/api/cancel.php");
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => json_encode(['event_id' => $eventId]),
-            CURLOPT_HTTPHEADER => [
-                'Content-Type: application/json',
-                'X-CSRF-Token: ' . $session['csrf'],
-                'Cookie: ' . $session['cookies'],
-            ],
-        ]);
-        curl_exec($ch);
-        curl_close($ch);
-    }
 }
 
 function getDbRegCount(int $eventId): int
@@ -250,13 +169,13 @@ function createTestEvent(string $baseUrl, string $title, int $capacity): ?int
             'title' => $title,
             'description' => 'Test event for concurrency testing',
             'venue' => 'Test Venue',
-            'category' => 'Test',
+            'category' => 'Technology',
             'event_date' => $futureDate,
             'capacity' => $capacity,
         ]),
         CURLOPT_HTTPHEADER => [
             'Content-Type: application/json',
-            'X-CSRF-Token: ' . $adminSession['csrf'],
+            'Accept: application/json',
             'Cookie: ' . $adminSession['cookies'],
         ],
     ]);
@@ -285,7 +204,7 @@ function deleteTestEvent(string $baseUrl, int $eventId): void
         CURLOPT_POSTFIELDS => json_encode(['action' => 'delete', 'id' => $eventId]),
         CURLOPT_HTTPHEADER => [
             'Content-Type: application/json',
-            'X-CSRF-Token: ' . $adminSession['csrf'],
+            'Accept: application/json',
             'Cookie: ' . $adminSession['cookies'],
         ],
     ]);
@@ -293,7 +212,7 @@ function deleteTestEvent(string $baseUrl, int $eventId): void
     curl_close($ch);
 }
 
-// TEST 1: N users racing for capacity-1 event → exactly 1 succeeds
+// ── TEST 1: N users racing for capacity-1 event → exactly 1 succeeds ──────────
 echo "TEST 1: N users racing for a capacity-1 event\n";
 echo str_repeat('-', 50) . "\n";
 
@@ -321,7 +240,7 @@ if ($testEventId1 === null) {
     $successes1 = 0;
     $fullErrors1 = 0;
     foreach ($results1 as $r) {
-        if ($r['http_code'] === 201) {
+        if ($r['http_code'] >= 200 && $r['http_code'] < 300) {
             $successes1++;
         } elseif ($r['http_code'] === 409 && ($r['body']['error']['code'] ?? '') === 'FULL') {
             $fullErrors1++;
@@ -329,7 +248,6 @@ if ($testEventId1 === null) {
     }
 
     $dbCount1 = getDbRegCount($testEventId1);
-
     echo "  Results: $successes1 succeeded, $fullErrors1 got FULL, DB count=$dbCount1\n";
 
     if ($successes1 === 1 && $fullErrors1 === ($numUsers - 1) && $dbCount1 === 1) {
@@ -338,11 +256,12 @@ if ($testEventId1 === null) {
         echo "  ❌ FAIL (expected 1 success, " . ($numUsers - 1) . " FULL, DB count 1)\n\n";
         $allPassed = false;
     }
-
+}
+if ($testEventId1 !== null) {
     deleteTestEvent($baseUrl, $testEventId1);
 }
 
-// TEST 2: N users racing for capacity-5 event → exactly 5 succeed
+// ── TEST 2: N users racing for capacity-5 event → exactly 5 succeed ──────────
 echo "TEST 2: N users racing for a capacity-5 event\n";
 echo str_repeat('-', 50) . "\n";
 
@@ -370,7 +289,7 @@ if ($testEventId2 === null) {
     $successes2 = 0;
     $fullErrors2 = 0;
     foreach ($results2 as $r) {
-        if ($r['http_code'] === 201) {
+        if ($r['http_code'] >= 200 && $r['http_code'] < 300) {
             $successes2++;
         } elseif ($r['http_code'] === 409 && ($r['body']['error']['code'] ?? '') === 'FULL') {
             $fullErrors2++;
@@ -378,7 +297,6 @@ if ($testEventId2 === null) {
     }
 
     $dbCount2 = getDbRegCount($testEventId2);
-
     echo "  Results: $successes2 succeeded, $fullErrors2 got FULL, DB count=$dbCount2\n";
 
     if ($successes2 === 5 && $fullErrors2 === ($numUsers2 - 5) && $dbCount2 === 5) {
@@ -387,11 +305,12 @@ if ($testEventId2 === null) {
         echo "  ❌ FAIL (expected 5 successes, " . ($numUsers2 - 5) . " FULL, DB count 5)\n\n";
         $allPassed = false;
     }
-
+}
+if ($testEventId2 !== null) {
     deleteTestEvent($baseUrl, $testEventId2);
 }
 
-// TEST 3: Same user fires 10 simultaneous registrations → exactly 1 succeeds
+// ── TEST 3: Same user fires 10 simultaneous registrations (duplicate check) ──
 echo "TEST 3: Same user fires 10 simultaneous registrations (duplicate prevention)\n";
 echo str_repeat('-', 50) . "\n";
 
@@ -402,7 +321,6 @@ if ($testEventId3 === null) {
     $allPassed = false;
 } else {
     $dupEmail = "conctest3_dup_" . time() . "@test.com";
-
     $firstSession = createTestUser($baseUrl, $dupEmail, "Dup Test User", "TestPass1");
 
     $dupSessions = [];
@@ -442,8 +360,22 @@ if ($testEventId3 === null) {
             $allPassed = false;
         }
     }
+}
+if ($testEventId3 !== null) {
+    deleteTestEvent($baseUrl, $testEventId3);
+}
 
-    deleteTestEvent($baseUrl, $testEventId3);   
+// ── FINAL CLEANUP: Delete conctest% users and test events ────────────────────
+try {
+    require_once __DIR__ . '/../includes/config.php';
+    require_once __DIR__ . '/../includes/db.php';
+    $db = get_db();
+    $db->exec("DELETE FROM registrations WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'conctest%')");
+    $db->exec("DELETE FROM registrations WHERE event_id IN (SELECT id FROM events WHERE title LIKE 'Concurrency Test%')");
+    $db->exec("DELETE FROM users WHERE email LIKE 'conctest%'");
+    $db->exec("DELETE FROM events WHERE title LIKE 'Concurrency Test%'");
+} catch (\Throwable $e) {
+    // Ignore cleanup errors
 }
 
 echo "========================================\n";

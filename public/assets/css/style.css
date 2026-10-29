@@ -905,74 +905,7 @@ h4 { font-size: var(--font-size-xl); }
     opacity: 1;
 }
 
-/* ── In-page Flash Alert Banner ────────────────────────────────────────── */
-.flash-container {
-    width: 100%;
-    margin-bottom: var(--space-6);
-}
 
-.alert {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--space-5);
-    border-radius: var(--radius-lg);
-    border: 1px solid transparent;
-    font-size: var(--font-size-base);
-    font-weight: 500;
-    animation: fadeInDown 0.3s ease forwards;
-    box-shadow: var(--shadow-md);
-    margin-bottom: var(--space-4);
-}
-
-.alert.removing {
-    animation: fadeOut 0.25s ease forwards;
-}
-
-.alert-success {
-    background: rgba(16, 185, 129, 0.15);
-    border-color: rgba(16, 185, 129, 0.4);
-    color: #6ee7b7;
-}
-
-.alert-error {
-    background: rgba(239, 68, 68, 0.15);
-    border-color: rgba(239, 68, 68, 0.4);
-    color: #fca5a5;
-}
-
-.alert-info {
-    background: rgba(59, 130, 246, 0.15);
-    border-color: rgba(59, 130, 246, 0.4);
-    color: #93c5fd;
-}
-
-.alert-icon {
-    font-size: var(--font-size-xl);
-    flex-shrink: 0;
-}
-
-.alert-message {
-    flex: 1;
-    line-height: 1.4;
-}
-
-.alert-close {
-    margin-left: auto;
-    background: none;
-    border: none;
-    color: inherit;
-    font-size: 1.25rem;
-    cursor: pointer;
-    opacity: 0.7;
-    line-height: 1;
-    padding: 0 var(--space-1);
-    transition: opacity var(--transition-fast);
-}
-
-.alert-close:hover {
-    opacity: 1;
-}
 
 /* ── Animation Keyframes ──────────────────────────────────────────────── */
 @keyframes toastDropIn {
@@ -1061,6 +994,7 @@ h4 { font-size: var(--font-size-xl); }
     overflow-y: auto;
     box-shadow: var(--shadow-lg);
     animation: scaleIn 0.25s ease;
+    margin: 0 auto;
 }
 
 .modal-overlay.removing .modal {
@@ -1368,11 +1302,16 @@ h4 { font-size: var(--font-size-xl); }
 /* ── Ticket Modal & Detailed Preview ─────────────────────────────────── */
 .ticket-modal {
     max-width: 620px;
+    margin: 0 auto;
     background: var(--bg-card);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: var(--radius-xl);
     overflow: hidden;
     box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6), 0 0 30px rgba(99, 102, 241, 0.15);
+}
+
+.ticket-modal .modal-body {
+    padding: 0;
 }
 
 .ticket-header-band {
@@ -1882,4 +1821,53 @@ h4 { font-size: var(--font-size-xl); }
 
 ::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.2);
+}
+
+/* ── Utilities for Component Layout & Spacing ───────────────────────── */
+.grid-2-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-4);
+}
+.text-center {
+    text-align: center;
+}
+.text-danger {
+    color: var(--danger);
+}
+.text-secondary {
+    color: var(--text-secondary);
+}
+.text-muted {
+    color: var(--text-muted);
+}
+.font-bold {
+    font-weight: 600;
+}
+.font-xs {
+    font-size: 0.75rem;
+}
+.mb-2 {
+    margin-bottom: var(--space-2);
+}
+.mb-4 {
+    margin-bottom: var(--space-4);
+}
+.mb-6 {
+    margin-bottom: var(--space-6);
+}
+.mt-2 {
+    margin-top: var(--space-2);
+}
+.mt-4 {
+    margin-top: var(--space-4);
+}
+.h-2 {
+    height: 8px;
+}
+.p-8 {
+    padding: var(--space-8);
+}
+.p-12 {
+    padding: var(--space-12);
 }
