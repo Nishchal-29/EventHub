@@ -1,5 +1,4 @@
 <?php
-// scripts/concurrency_test.php — Automated parallel concurrency test suite
 declare(strict_types=1);
 
 if (PHP_SAPI !== 'cli') {

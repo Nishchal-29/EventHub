@@ -1,5 +1,4 @@
 <?php
-// includes/common.php — Shared DB, auth, helpers, and event queries (local demo only)
 ini_set('display_errors', '0');
 session_set_cookie_params(['httponly' => true, 'samesite' => 'Lax']);
 if (PHP_SAPI !== 'cli') {
@@ -13,7 +12,6 @@ if (PHP_SAPI !== 'cli') {
     }
 }
 
-// Local demo credentials
 $pdo = new PDO('pgsql:host=localhost;port=5432;dbname=eventportal', 'eventportal', 'password', [
     PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
     PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,

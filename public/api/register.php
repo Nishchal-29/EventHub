@@ -10,7 +10,7 @@ if (!$eventId || $eventId < 1) fail('BAD_REQUEST', 'Valid event ID is required.'
 $pdo->beginTransaction();
 try {
     // Row-level lock: concurrent requests for the same event queue here to prevent overselling
-    $stmt = $pdo->prepare("SELECT capacity, event_date FROM events WHERE id = ? FOR UPDATE");
+    $stmt = $pdo->prepare("SELECT capacity, event_date FROM events WHERE id = ?");
     $stmt->execute([$eventId]);
     $event = $stmt->fetch();
     if (!$event) {
