@@ -1,7 +1,11 @@
+/**
+ * admin.js — Administrator dashboard.
+ * Provides event statistics, event creation and deletion dialogs,
+ * and attendee roster view for administrative users.
+ */
 'use strict';
 
 (() => {
-    const CATEGORIES = ['Arts', 'Business', 'Food & Drink', 'Music', 'Sports', 'Technology'];
     let allEvents = [];
 
     function renderStats() {
@@ -23,7 +27,7 @@
         body.innerHTML = '';
 
         if (allEvents.length === 0) {
-            body.innerHTML = '<tr><td colspan="6" class="empty-state p-12 text-center"><p>No events yet.</p></td></tr>';
+            body.innerHTML = '<tr><td colspan="5" class="empty-state p-12 text-center"><p>No events yet.</p></td></tr>';
             return;
         }
 
@@ -33,12 +37,10 @@
             row.innerHTML = `
                 <td class="ev-title"></td>
                 <td class="ev-date"></td>
-                <td class="ev-category"></td>
                 <td>${event.registered_count} / ${event.capacity}</td>
                 <td>${App.getStatusBadge(event)}</td>
                 <td>
                     <div class="table-actions">
-                        <button class="btn btn-ghost btn-sm btn-edit" data-event-id="${event.id}">Edit</button>
                         <button class="btn btn-ghost btn-sm btn-attendees" data-event-id="${event.id}">Attendees</button>
                         <button class="btn btn-ghost btn-sm btn-delete text-danger" data-event-id="${event.id}">Delete</button>
                     </div>
@@ -47,7 +49,6 @@
 
             row.querySelector('.ev-title').textContent = event.title;
             row.querySelector('.ev-date').textContent = App.formatDateTime(event.event_date);
-            row.querySelector('.ev-category').textContent = event.category || '—';
 
             body.appendChild(row);
         });
@@ -55,11 +56,11 @@
 
     async function loadAdminEvents() {
         const body = $('#admin-events-body');
-        if (body) body.innerHTML = '<tr><td colspan="6" class="text-center"><div class="spinner"></div></td></tr>';
+        if (body) body.innerHTML = '<tr><td colspan="5" class="text-center"><div class="spinner"></div></td></tr>';
 
         try {
-            const res = await App.api('GET', '/api/events.php', { per_page: 50 });
-            allEvents = res.data.events;
+            const res = await App.api('GET', '/api/events.php');
+            allEvents = res.data.events || [];
             renderEventsTable();
             renderStats();
         } catch {
@@ -67,10 +68,7 @@
         }
     }
 
-    function showEventModal(event) {
-        const isEdit = !!event;
-        const modalTitle = isEdit ? 'Edit Event' : 'Create Event';
-
+    function showCreateEventModal() {
         const form = document.createElement('form');
         form.id = 'event-form';
         form.innerHTML = `
@@ -83,19 +81,9 @@
                 <label class="form-label" for="ef-description">Description</label>
                 <textarea id="ef-description" name="description" class="form-textarea form-input"></textarea>
             </div>
-            <div class="grid-2-col">
-                <div class="form-group">
-                    <label class="form-label" for="ef-venue">Venue</label>
-                    <input type="text" id="ef-venue" name="venue" class="form-input" maxlength="200">
-                </div>
-                <div class="form-group">
-                    <label class="form-label" for="ef-category">Category *</label>
-                    <select id="ef-category" name="category" class="form-select form-input" required>
-                        <option value="">Select Category</option>
-                        ${CATEGORIES.map(c => `<option value="${App.escapeHtml(c)}">${App.escapeHtml(c)}</option>`).join('')}
-                    </select>
-                    <div class="form-error" id="err-category"></div>
-                </div>
+            <div class="form-group">
+                <label class="form-label" for="ef-venue">Venue</label>
+                <input type="text" id="ef-venue" name="venue" class="form-input" maxlength="200">
             </div>
             <div class="grid-2-col">
                 <div class="form-group">
@@ -111,23 +99,8 @@
             </div>
         `;
 
-        if (isEdit) {
-            form.querySelector('#ef-title').value = event.title;
-            form.querySelector('#ef-description').value = event.description || '';
-            form.querySelector('#ef-venue').value = event.venue || '';
-            if (event.category && !CATEGORIES.includes(event.category)) {
-                const opt = document.createElement('option');
-                opt.value = event.category;
-                opt.textContent = event.category;
-                form.querySelector('#ef-category').appendChild(opt);
-            }
-            form.querySelector('#ef-category').value = event.category || '';
-            form.querySelector('#ef-date').value = App.isoToDatetimeLocal(event.event_date);
-            form.querySelector('#ef-capacity').value = event.capacity;
-        }
-
         const m = App.modal({
-            title: modalTitle,
+            title: 'Create Event',
             body: form,
             modalClass: 'modal-large',
             buttons: [
@@ -137,22 +110,21 @@
                     onClick: close => close()
                 },
                 {
-                    text: isEdit ? 'Update Event' : 'Create Event',
+                    text: 'Create Event',
                     class: 'btn-primary btn-save-event',
                     onClick: async close => {
                         App.clearFieldErrors(form);
                         const data = {
+                            action: 'create',
                             title: form.querySelector('#ef-title').value.trim(),
                             description: form.querySelector('#ef-description').value.trim(),
                             venue: form.querySelector('#ef-venue').value.trim(),
-                            category: form.querySelector('#ef-category').value.trim(),
                             event_date: form.querySelector('#ef-date').value,
                             capacity: form.querySelector('#ef-capacity').value
                         };
 
                         const errors = {};
                         if (!data.title) errors.title = 'Title is required.';
-                        if (!data.category) errors.category = 'Please select a category.';
                         if (!data.event_date) errors.event_date = 'Event date is required.';
                         if (!data.capacity || parseInt(data.capacity, 10) < 1) {
                             errors.capacity = 'Valid capacity (at least 1) is required.';
@@ -163,25 +135,18 @@
                             return;
                         }
 
-                        if (isEdit) {
-                            data.action = 'update';
-                            data.id = event.id;
-                        } else {
-                            data.action = 'create';
-                        }
-
                         const saveBtn = m.modalBox.querySelector('.btn-save-event');
                         saveBtn.disabled = true;
                         saveBtn.innerHTML = '<span class="spinner-inline"></span> Saving...';
 
                         try {
-                            const res = await App.api('POST', '/api/admin_events.php', data);
-                            App.toast('success', res.message);
+                            const res = await App.api('POST', '/api/admin.php', data);
+                            App.toast('success', res.message || 'Event created.');
                             close();
                             loadAdminEvents();
                         } catch (res) {
                             saveBtn.disabled = false;
-                            saveBtn.textContent = isEdit ? 'Update Event' : 'Create Event';
+                            saveBtn.textContent = 'Create Event';
                             if (res?.error?.fields) {
                                 App.showFieldErrors(form, res.error.fields);
                             } else if (res?.error) {
@@ -205,7 +170,7 @@
         `;
         wrapper.querySelector('.modal-event-title').textContent = titleText;
 
-        const m = App.modal({
+        App.modal({
             title: 'Attendees',
             body: wrapper,
             modalClass: 'modal-large',
@@ -218,16 +183,9 @@
             ]
         });
 
-        const csvBtn = document.createElement('a');
-        csvBtn.className = 'btn btn-outline btn-sm';
-        csvBtn.href = `/api/admin_attendees.php?event_id=${eventId}&format=csv`;
-        csvBtn.setAttribute('download', '');
-        csvBtn.textContent = 'Download CSV';
-        m.modalBox.querySelector('.modal-footer')?.prepend(csvBtn);
-
         try {
-            const res = await App.api('GET', '/api/admin_attendees.php', { event_id: eventId });
-            const attendees = res.data.attendees;
+            const res = await App.api('GET', '/api/admin.php', { attendees: eventId });
+            const attendees = res.data.attendees || [];
             const list = wrapper.querySelector('#attendees-list');
             if (!list) return;
 
@@ -263,12 +221,7 @@
         }
     }
 
-    on('click', '#btn-create-event', () => showEventModal(null));
-
-    on('click', '.btn-edit', function () {
-        const ev = allEvents.find(e => e.id === parseInt(this.dataset.eventId, 10));
-        if (ev) showEventModal(ev);
-    });
+    on('click', '#btn-create-event', () => showCreateEventModal());
 
     on('click', '.btn-attendees', function () {
         showAttendeesModal(parseInt(this.dataset.eventId, 10));
@@ -288,8 +241,8 @@
         if (!ok) return;
 
         try {
-            const res = await App.api('POST', '/api/admin_events.php', { action: 'delete', id: eventId });
-            App.toast('success', res.message);
+            const res = await App.api('POST', '/api/admin.php', { action: 'delete', id: eventId });
+            App.toast('success', res.message || 'Event deleted.');
             loadAdminEvents();
         } catch (res) {
             if (res?.error) App.toast('error', res.error.message);

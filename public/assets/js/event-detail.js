@@ -1,3 +1,8 @@
+/**
+ * event-detail.js — Single event view controller.
+ * Displays comprehensive event metadata, live capacity progress,
+ * and handles registration/cancellation with background seat polling.
+ */
 'use strict';
 
 (() => {
@@ -59,13 +64,6 @@
                         </div>
                     </div>
                     <div class="detail-info-item">
-                        <div class="detail-info-icon">🏷️</div>
-                        <div class="detail-info-text">
-                            <div class="label">Category</div>
-                            <div class="value detail-category"></div>
-                        </div>
-                    </div>
-                    <div class="detail-info-item">
                         <div class="detail-info-icon">💺</div>
                         <div class="detail-info-text">
                             <div class="label">Availability</div>
@@ -86,7 +84,6 @@
         container.querySelector('.event-detail-title').textContent = event.title;
         container.querySelector('.detail-date').textContent = App.formatDateTime(event.event_date);
         container.querySelector('.detail-venue').textContent = event.venue || 'TBD';
-        container.querySelector('.detail-category').textContent = event.category || 'General';
         container.querySelector('.event-detail-description').textContent = event.description || 'No description available.';
 
         document.title = `${event.title} — EventHub`;
@@ -112,7 +109,7 @@
         container.innerHTML = '<div class="spinner"></div>';
 
         try {
-            const res = await App.api('GET', '/api/event.php', { id: eventId });
+            const res = await App.api('GET', '/api/events.php', { id: eventId });
             renderStaticShell(res.data);
             if (!poller) poller = App.poll(pollEventDetail, 5000);
         } catch (res) {
@@ -130,10 +127,10 @@
     async function pollEventDetail() {
         if (!eventId) return;
         const actions = $('.event-detail-actions');
-        if (actions?.dataset.busy) return; 
+        if (actions?.dataset.busy) return;
 
         try {
-            const res = await App.api('GET', '/api/event.php', { id: eventId });
+            const res = await App.api('GET', '/api/events.php', { id: eventId });
             const oldText = $('.detail-seats')?.textContent;
             renderDynamicParts(res.data);
             const newText = `${res.data.remaining_seats} of ${res.data.capacity} seats left`;

@@ -1,12 +1,14 @@
 <?php
+// scripts/concurrency_test.php — Automated parallel concurrency test suite
 declare(strict_types=1);
 
-if (php_sapi_name() !== 'cli') {
+if (PHP_SAPI !== 'cli') {
     die("This script must be run from the command line.\n");
 }
 
-$baseUrl = $argv[1] ?? 'http://localhost:8080';
-$baseUrl = rtrim($baseUrl, '/');
+require __DIR__ . '/../includes/common.php';
+
+$baseUrl = rtrim($argv[1] ?? 'http://localhost:8080', '/');
 
 echo "========================================\n";
 echo " Concurrency Test Suite\n";
@@ -15,91 +17,86 @@ echo "========================================\n\n";
 
 $allPassed = true;
 
-function extractCookies(string $headers): string
-{
+function extractCookies(string $headers): string {
     preg_match_all('/Set-Cookie:\s*([^;\r\n]+)/i', $headers, $matches);
     $cookies = [];
     foreach ($matches[1] ?? [] as $part) {
         $eq = strpos($part, '=');
         if ($eq !== false) {
             $name = trim(substr($part, 0, $eq));
-            $val = trim(substr($part, $eq + 1));
-            $cookies[$name] = $val;
+            $cookies[$name] = trim(substr($part, $eq + 1));
         }
     }
-    $cookieStr = [];
-    foreach ($cookies as $name => $val) {
-        $cookieStr[] = "$name=$val";
-    }
-    return implode('; ', $cookieStr);
+    $parts = [];
+    foreach ($cookies as $k => $v) $parts[] = "$k=$v";
+    return implode('; ', $parts);
 }
 
-function createTestUser(string $baseUrl, string $email, string $name, string $password): ?array
-{
-    $ch = curl_init("$baseUrl/api/signup.php");
+function createTestUser(string $baseUrl, string $name, string $email, string $password): ?array {
+    $ch = curl_init("$baseUrl/api/auth.php");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => json_encode(['name' => $name, 'email' => $email, 'password' => $password]),
-        CURLOPT_HTTPHEADER => [
-            'Content-Type: application/json',
-            'Accept: application/json',
-        ],
+        CURLOPT_POSTFIELDS => json_encode(['action' => 'signup', 'name' => $name, 'email' => $email, 'password' => $password]),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: application/json'],
         CURLOPT_HEADER => true,
+        CURLOPT_TIMEOUT => 10,
     ]);
-    $response = curl_exec($ch);
-    $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-    $headers = substr($response, 0, $headerSize);
-    $body = substr($response, $headerSize);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $res = curl_exec($ch);
+    $size = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+    $headers = substr($res, 0, $size);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    $cookies = extractCookies($headers);
-
-    $result = json_decode($body, true);
-    if ($httpCode === 201 || ($httpCode === 409 && ($result['error']['code'] ?? '') === 'DUPLICATE')) {
-        if ($httpCode === 409) {
-            return loginUser($baseUrl, $email, $password);
-        }
-        return ['cookies' => $cookies];
+    if ($code >= 200 && $code < 300) {
+        return ['cookies' => extractCookies($headers)];
     }
-
-    echo "  [ERROR] Failed to create user $email (HTTP $httpCode): $body\n";
-    return null;
+    return loginUser($baseUrl, $email, $password);
 }
 
-function loginUser(string $baseUrl, string $email, string $password): ?array
-{
-    $ch = curl_init("$baseUrl/api/login.php");
+function loginUser(string $baseUrl, string $email, string $password): ?array {
+    $ch = curl_init("$baseUrl/api/auth.php");
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => json_encode(['email' => $email, 'password' => $password]),
-        CURLOPT_HTTPHEADER => [
-            'Content-Type: application/json',
-            'Accept: application/json',
-        ],
+        CURLOPT_POSTFIELDS => json_encode(['action' => 'login', 'email' => $email, 'password' => $password]),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: application/json'],
         CURLOPT_HEADER => true,
+        CURLOPT_TIMEOUT => 10,
     ]);
-    $response = curl_exec($ch);
-    $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-    $headers = substr($response, 0, $headerSize);
-    $body = substr($response, $headerSize);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $res = curl_exec($ch);
+    $size = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+    $headers = substr($res, 0, $size);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    $cookies = extractCookies($headers);
-
-    if ($httpCode === 200) {
-        return ['cookies' => $cookies];
+    if ($code === 200) {
+        return ['cookies' => extractCookies($headers)];
     }
-
-    echo "  [ERROR] Login failed for $email (HTTP $httpCode): $body\n";
     return null;
 }
 
-function fireConcurrentRegistrations(string $baseUrl, array $sessions, int $eventId): array
-{
+function createTestEvent(string $title, int $capacity): int {
+    global $pdo;
+    $stmt = $pdo->prepare("INSERT INTO events (title, description, venue, event_date, capacity)
+                           VALUES (?, 'Test event', 'Test Venue', NOW() + INTERVAL '30 days', ?) RETURNING id");
+    $stmt->execute([$title, $capacity]);
+    return (int)$stmt->fetchColumn();
+}
+
+function deleteTestEvent(int $eventId): void {
+    global $pdo;
+    $pdo->prepare("DELETE FROM events WHERE id = ?")->execute([$eventId]);
+}
+
+function getDbRegCount(int $eventId): int {
+    global $pdo;
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM registrations WHERE event_id = ?");
+    $stmt->execute([$eventId]);
+    return (int)$stmt->fetchColumn();
+}
+
+function fireConcurrentRegistrations(string $baseUrl, array $sessions, int $eventId): array {
     $mh = curl_multi_init();
     $handles = [];
 
@@ -114,6 +111,7 @@ function fireConcurrentRegistrations(string $baseUrl, array $sessions, int $even
                 'Accept: application/json',
                 'Cookie: ' . $session['cookies'],
             ],
+            CURLOPT_TIMEOUT => 15,
         ]);
         curl_multi_add_handle($mh, $ch);
         $handles[$i] = $ch;
@@ -126,256 +124,129 @@ function fireConcurrentRegistrations(string $baseUrl, array $sessions, int $even
     } while ($running > 0);
 
     $results = [];
-    foreach ($handles as $i => $ch) {
+    foreach ($handles as $ch) {
         $body = curl_multi_getcontent($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $results[] = [
-            'http_code' => $httpCode,
-            'body' => json_decode($body, true) ?? [],
+            'http_code' => $code,
+            'body'      => json_decode($body ?: '', true) ?? [],
         ];
         curl_multi_remove_handle($mh, $ch);
         curl_close($ch);
     }
-
     curl_multi_close($mh);
     return $results;
 }
 
-function getDbRegCount(int $eventId): int
-{
-    require_once __DIR__ . '/../includes/config.php';
-    require_once __DIR__ . '/../includes/db.php';
-    $db = get_db();
-    $stmt = $db->prepare("SELECT COUNT(*) FROM registrations WHERE event_id = :eid AND status = 'active'");
-    $stmt->execute(['eid' => $eventId]);
-    return (int) $stmt->fetchColumn();
-}
+try {
+    // ── TEST 1: N users racing for capacity-1 event ─────────────────────────
+    echo "TEST 1: N users racing for a capacity-1 event\n";
+    echo str_repeat('-', 50) . "\n";
+    $event1 = createTestEvent('Concurrency Test Cap-1 ' . time(), 1);
 
-function createTestEvent(string $baseUrl, string $title, int $capacity): ?int
-{
-    $adminSession = loginUser($baseUrl, 'admin@example.com', 'AdminPass1');
-    if (!$adminSession) {
-        echo "  [ERROR] Cannot log in as admin to create test event.\n";
-        return null;
-    }
-
-    $ch = curl_init("$baseUrl/api/admin_events.php");
-    $futureDate = (new DateTimeImmutable('+30 days'))->format('Y-m-d\TH:i');
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => json_encode([
-            'action' => 'create',
-            'title' => $title,
-            'description' => 'Test event for concurrency testing',
-            'venue' => 'Test Venue',
-            'category' => 'Technology',
-            'event_date' => $futureDate,
-            'capacity' => $capacity,
-        ]),
-        CURLOPT_HTTPHEADER => [
-            'Content-Type: application/json',
-            'Accept: application/json',
-            'Cookie: ' . $adminSession['cookies'],
-        ],
-    ]);
-    $body = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-
-    $result = json_decode($body, true);
-    if ($httpCode === 201 && !empty($result['data']['id'])) {
-        return (int) $result['data']['id'];
-    }
-
-    echo "  [ERROR] Failed to create test event (HTTP $httpCode): $body\n";
-    return null;
-}
-
-function deleteTestEvent(string $baseUrl, int $eventId): void
-{
-    $adminSession = loginUser($baseUrl, 'admin@example.com', 'AdminPass1');
-    if (!$adminSession) return;
-
-    $ch = curl_init("$baseUrl/api/admin_events.php");
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => json_encode(['action' => 'delete', 'id' => $eventId]),
-        CURLOPT_HTTPHEADER => [
-            'Content-Type: application/json',
-            'Accept: application/json',
-            'Cookie: ' . $adminSession['cookies'],
-        ],
-    ]);
-    curl_exec($ch);
-    curl_close($ch);
-}
-
-// ── TEST 1: N users racing for capacity-1 event → exactly 1 succeeds ──────────
-echo "TEST 1: N users racing for a capacity-1 event\n";
-echo str_repeat('-', 50) . "\n";
-
-$numUsers = 10;
-$testEventId1 = createTestEvent($baseUrl, 'Concurrency Test Cap-1 ' . time(), 1);
-
-if ($testEventId1 === null) {
-    echo "  SKIP: Could not create test event.\n\n";
-    $allPassed = false;
-} else {
     $sessions1 = [];
-    for ($i = 1; $i <= $numUsers; $i++) {
-        $email = "conctest1_user{$i}_" . time() . "@test.com";
-        $session = createTestUser($baseUrl, $email, "Test User $i", "TestPass1");
-        if ($session) {
-            $sessions1[] = $session;
-        }
+    for ($i = 1; $i <= 10; $i++) {
+        $email = "conctest1_u{$i}_" . time() . "@test.com";
+        $s = createTestUser($baseUrl, "Test User $i", $email, "TestPass1");
+        if ($s) $sessions1[] = $s;
     }
 
     echo "  Created " . count($sessions1) . " test users.\n";
-    echo "  Firing $numUsers simultaneous registrations for event $testEventId1 (capacity=1)...\n";
+    echo "  Firing 10 simultaneous registrations for event $event1 (capacity=1)...\n";
+    $results1 = fireConcurrentRegistrations($baseUrl, $sessions1, $event1);
 
-    $results1 = fireConcurrentRegistrations($baseUrl, $sessions1, $testEventId1);
-
-    $successes1 = 0;
-    $fullErrors1 = 0;
+    $success1 = 0;
+    $full1 = 0;
     foreach ($results1 as $r) {
-        if ($r['http_code'] >= 200 && $r['http_code'] < 300) {
-            $successes1++;
-        } elseif ($r['http_code'] === 409 && ($r['body']['error']['code'] ?? '') === 'FULL') {
-            $fullErrors1++;
-        }
+        if ($r['http_code'] >= 200 && $r['http_code'] < 300) $success1++;
+        elseif ($r['http_code'] === 409 && ($r['body']['error']['code'] ?? '') === 'FULL') $full1++;
     }
+    $dbCount1 = getDbRegCount($event1);
+    echo "  Results: $success1 succeeded, $full1 got FULL, DB count=$dbCount1\n";
 
-    $dbCount1 = getDbRegCount($testEventId1);
-    echo "  Results: $successes1 succeeded, $fullErrors1 got FULL, DB count=$dbCount1\n";
-
-    if ($successes1 === 1 && $fullErrors1 === ($numUsers - 1) && $dbCount1 === 1) {
+    if ($success1 === 1 && $full1 === 9 && $dbCount1 === 1) {
         echo "  ✅ PASS\n\n";
     } else {
-        echo "  ❌ FAIL (expected 1 success, " . ($numUsers - 1) . " FULL, DB count 1)\n\n";
+        echo "  ❌ FAIL (expected 1 success, 9 FULL, DB count 1)\n\n";
         $allPassed = false;
     }
-}
-if ($testEventId1 !== null) {
-    deleteTestEvent($baseUrl, $testEventId1);
-}
+    deleteTestEvent($event1);
 
-// ── TEST 2: N users racing for capacity-5 event → exactly 5 succeed ──────────
-echo "TEST 2: N users racing for a capacity-5 event\n";
-echo str_repeat('-', 50) . "\n";
+    // ── TEST 2: N users racing for capacity-5 event ─────────────────────────
+    echo "TEST 2: N users racing for a capacity-5 event\n";
+    echo str_repeat('-', 50) . "\n";
+    $event2 = createTestEvent('Concurrency Test Cap-5 ' . time(), 5);
 
-$numUsers2 = 15;
-$testEventId2 = createTestEvent($baseUrl, 'Concurrency Test Cap-5 ' . time(), 5);
-
-if ($testEventId2 === null) {
-    echo "  SKIP: Could not create test event.\n\n";
-    $allPassed = false;
-} else {
     $sessions2 = [];
-    for ($i = 1; $i <= $numUsers2; $i++) {
-        $email = "conctest2_user{$i}_" . time() . "@test.com";
-        $session = createTestUser($baseUrl, $email, "Test User $i", "TestPass1");
-        if ($session) {
-            $sessions2[] = $session;
-        }
+    for ($i = 1; $i <= 15; $i++) {
+        $email = "conctest2_u{$i}_" . time() . "@test.com";
+        $s = createTestUser($baseUrl, "Test User $i", $email, "TestPass1");
+        if ($s) $sessions2[] = $s;
     }
 
     echo "  Created " . count($sessions2) . " test users.\n";
-    echo "  Firing $numUsers2 simultaneous registrations for event $testEventId2 (capacity=5)...\n";
+    echo "  Firing 15 simultaneous registrations for event $event2 (capacity=5)...\n";
+    $results2 = fireConcurrentRegistrations($baseUrl, $sessions2, $event2);
 
-    $results2 = fireConcurrentRegistrations($baseUrl, $sessions2, $testEventId2);
-
-    $successes2 = 0;
-    $fullErrors2 = 0;
+    $success2 = 0;
+    $full2 = 0;
     foreach ($results2 as $r) {
-        if ($r['http_code'] >= 200 && $r['http_code'] < 300) {
-            $successes2++;
-        } elseif ($r['http_code'] === 409 && ($r['body']['error']['code'] ?? '') === 'FULL') {
-            $fullErrors2++;
-        }
+        if ($r['http_code'] >= 200 && $r['http_code'] < 300) $success2++;
+        elseif ($r['http_code'] === 409 && ($r['body']['error']['code'] ?? '') === 'FULL') $full2++;
     }
+    $dbCount2 = getDbRegCount($event2);
+    echo "  Results: $success2 succeeded, $full2 got FULL, DB count=$dbCount2\n";
 
-    $dbCount2 = getDbRegCount($testEventId2);
-    echo "  Results: $successes2 succeeded, $fullErrors2 got FULL, DB count=$dbCount2\n";
-
-    if ($successes2 === 5 && $fullErrors2 === ($numUsers2 - 5) && $dbCount2 === 5) {
+    if ($success2 === 5 && $full2 === 10 && $dbCount2 === 5) {
         echo "  ✅ PASS\n\n";
     } else {
-        echo "  ❌ FAIL (expected 5 successes, " . ($numUsers2 - 5) . " FULL, DB count 5)\n\n";
+        echo "  ❌ FAIL (expected 5 successes, 10 FULL, DB count 5)\n\n";
         $allPassed = false;
     }
-}
-if ($testEventId2 !== null) {
-    deleteTestEvent($baseUrl, $testEventId2);
-}
+    deleteTestEvent($event2);
 
-// ── TEST 3: Same user fires 10 simultaneous registrations (duplicate check) ──
-echo "TEST 3: Same user fires 10 simultaneous registrations (duplicate prevention)\n";
-echo str_repeat('-', 50) . "\n";
+    // ── TEST 3: Same user fires 10 simultaneous registrations ────────────────
+    echo "TEST 3: Same user fires 10 simultaneous registrations (duplicate prevention)\n";
+    echo str_repeat('-', 50) . "\n";
+    $event3 = createTestEvent('Concurrency Test Dup ' . time(), 50);
 
-$testEventId3 = createTestEvent($baseUrl, 'Concurrency Test Dup ' . time(), 50);
-
-if ($testEventId3 === null) {
-    echo "  SKIP: Could not create test event.\n\n";
-    $allPassed = false;
-} else {
     $dupEmail = "conctest3_dup_" . time() . "@test.com";
-    $firstSession = createTestUser($baseUrl, $dupEmail, "Dup Test User", "TestPass1");
+    createTestUser($baseUrl, "Dup User", $dupEmail, "TestPass1");
 
     $dupSessions = [];
-    if ($firstSession) {
-        for ($i = 0; $i < 10; $i++) {
-            $s = loginUser($baseUrl, $dupEmail, 'TestPass1');
-            if ($s) $dupSessions[] = $s;
-        }
+    for ($i = 0; $i < 10; $i++) {
+        $s = loginUser($baseUrl, $dupEmail, "TestPass1");
+        if ($s) $dupSessions[] = $s;
     }
 
-    if (count($dupSessions) < 2) {
-        echo "  SKIP: Could not create enough sessions for the test user.\n\n";
-        $allPassed = false;
+    $n = count($dupSessions);
+    echo "  Firing $n simultaneous registrations from the same user (separate sessions)...\n";
+    $results3 = fireConcurrentRegistrations($baseUrl, $dupSessions, $event3);
+
+    $success3 = 0;
+    $dup3 = 0;
+    foreach ($results3 as $r) {
+        if ($r['http_code'] >= 200 && $r['http_code'] < 300) $success3++;
+        elseif ($r['http_code'] === 409 && ($r['body']['error']['code'] ?? '') === 'DUPLICATE') $dup3++;
+    }
+    $dbCount3 = getDbRegCount($event3);
+    echo "  Results: $success3 succeeded, $dup3 got DUPLICATE, DB count=$dbCount3\n";
+
+    if ($success3 === 1 && $dup3 === ($n - 1) && $dbCount3 === 1) {
+        echo "  ✅ PASS\n\n";
     } else {
-        $n = count($dupSessions);
-        echo "  Firing $n simultaneous registrations from the same user (separate sessions)...\n";
-
-        $results3 = fireConcurrentRegistrations($baseUrl, $dupSessions, $testEventId3);
-
-        $successes3 = 0;
-        $duplicates3 = 0;
-        foreach ($results3 as $r) {
-            if ($r['http_code'] >= 200 && $r['http_code'] < 300) {
-                $successes3++;
-            } elseif ($r['http_code'] === 409 && ($r['body']['error']['code'] ?? '') === 'DUPLICATE') {
-                $duplicates3++;
-            }
-        }
-
-        $dbCount3 = getDbRegCount($testEventId3);
-        echo "  Results: $successes3 succeeded, $duplicates3 got DUPLICATE, DB count=$dbCount3\n";
-
-        if ($successes3 === 1 && $duplicates3 === $n - 1 && $dbCount3 === 1) {
-            echo "  ✅ PASS\n\n";
-        } else {
-            echo "  ❌ FAIL (expected 1 success, " . ($n - 1) . " DUPLICATE, DB count 1)\n\n";
-            $allPassed = false;
-        }
+        echo "  ❌ FAIL (expected 1 success, " . ($n - 1) . " DUPLICATE, DB count 1)\n\n";
+        $allPassed = false;
     }
-}
-if ($testEventId3 !== null) {
-    deleteTestEvent($baseUrl, $testEventId3);
-}
-
-// ── FINAL CLEANUP: Delete conctest% users and test events ────────────────────
-try {
-    require_once __DIR__ . '/../includes/config.php';
-    require_once __DIR__ . '/../includes/db.php';
-    $db = get_db();
-    $db->exec("DELETE FROM registrations WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'conctest%')");
-    $db->exec("DELETE FROM registrations WHERE event_id IN (SELECT id FROM events WHERE title LIKE 'Concurrency Test%')");
-    $db->exec("DELETE FROM users WHERE email LIKE 'conctest%'");
-    $db->exec("DELETE FROM events WHERE title LIKE 'Concurrency Test%'");
-} catch (\Throwable $e) {
-    // Ignore cleanup errors
+    deleteTestEvent($event3);
+} finally {
+    // ── Clean up all test data even after failures ──────────────────────────
+    try {
+        $pdo->exec("DELETE FROM registrations WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'conctest%')");
+        $pdo->exec("DELETE FROM registrations WHERE event_id IN (SELECT id FROM events WHERE title LIKE 'Concurrency Test%')");
+        $pdo->exec("DELETE FROM users WHERE email LIKE 'conctest%'");
+        $pdo->exec("DELETE FROM events WHERE title LIKE 'Concurrency Test%'");
+    } catch (\Throwable $e) {}
 }
 
 echo "========================================\n";
