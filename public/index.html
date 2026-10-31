@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Discover and register for exciting events. Browse upcoming conferences, workshops, and social gatherings.">
     <title>EventHub — Discover & Register for Events</title>
-    <link rel="stylesheet" href="/assets/css/style.css?v=4">
+    <link rel="stylesheet" href="/assets/css/style.css?v=5">
 </head>
 <body>
     <main class="main-content" role="main">
@@ -13,24 +13,6 @@
             <div class="page-header">
                 <h1>Discover Events</h1>
                 <p>Find and register for exciting events happening near you</p>
-            </div>
-            <div class="filter-bar" role="search" aria-label="Filter events">
-                <div class="search-input-wrapper">
-                    <span class="search-icon">🔍</span>
-                    <input type="text" id="search-input" class="form-input" placeholder="Search events..." aria-label="Search events">
-                </div>
-                <select id="filter-category" class="form-select" aria-label="Filter by category">
-                    <option value="">All Categories</option>
-                </select>
-                <select id="filter-sort" class="form-select" aria-label="Sort events">
-                    <option value="date">Sort by Date</option>
-                    <option value="title">Sort by Title</option>
-                    <option value="seats">Sort by Availability</option>
-                </select>
-                <div class="toggle-group">
-                    <span>Upcoming only</span>
-                    <div class="toggle-switch" id="toggle-upcoming" role="switch" aria-checked="false" aria-label="Show upcoming events only" tabindex="0"></div>
-                </div>
             </div>
 
             <div id="events-grid" class="card-grid" aria-live="polite">
@@ -41,12 +23,10 @@
                 <div class="skeleton skeleton-card"></div>
                 <div class="skeleton skeleton-card"></div>
             </div>
-
-            <div id="events-pagination" class="pagination" aria-label="Event pages"></div>
         </div>
     </main>
 
-    <script src="/assets/js/common.js?v=4"></script>
-    <script src="/assets/js/events.js?v=4"></script>
+    <script src="/assets/js/common.js?v=5"></script>
+    <script src="/assets/js/events.js?v=5"></script>
 </body>
 </html>

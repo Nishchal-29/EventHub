@@ -1,3 +1,8 @@
+/**
+ * common.js — Global App namespace, shared UI components and API client.
+ * Provides central modal/confirm, floating toasts, field error bindings,
+ * polling controller, responsive navbar, and authenticated fetch wrapper.
+ */
 'use strict';
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -28,13 +33,6 @@ const App = (() => {
         });
         const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
         return `${date} at ${time}`;
-    }
-
-    function isoToDatetimeLocal(iso) {
-        if (!iso) return '';
-        const d = new Date(iso);
-        const pad = n => String(n).padStart(2, '0');
-        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
 
     function truncate(str, len) {
@@ -82,7 +80,7 @@ const App = (() => {
 
         const status = response.status;
         if (status === 401) {
-            if (!url.includes('/api/login.php') && window.location.pathname !== '/login.html') {
+            if (!url.includes('/api/auth.php') && window.location.pathname !== '/login.html') {
                 const next = encodeURIComponent(window.location.pathname + window.location.search);
                 window.location.href = `/login.html?next=${next}`;
             }
@@ -136,13 +134,9 @@ const App = (() => {
         setTimeout(remove, 5000);
     }
 
-    function modal({ title, body, buttons = [], modalClass = '', overlayClass = '', footerClass = '' }) {
+    function modal({ title, body, buttons = [], modalClass = '' }) {
         const overlay = document.createElement('div');
-        const extraOverlay = [
-            overlayClass,
-            modalClass.includes('ticket-modal') ? 'ticket-modal-overlay' : ''
-        ].filter(Boolean).join(' ');
-        overlay.className = `modal-overlay ${extraOverlay}`.trim();
+        overlay.className = `modal-overlay ${modalClass ? modalClass + '-overlay' : ''}`.trim();
         overlay.setAttribute('role', 'dialog');
         overlay.setAttribute('aria-modal', 'true');
 
@@ -170,11 +164,7 @@ const App = (() => {
 
         if (buttons.length > 0) {
             const footer = document.createElement('div');
-            const extraFooter = [
-                footerClass,
-                modalClass.includes('ticket-modal') ? 'ticket-footer' : ''
-            ].filter(Boolean).join(' ');
-            footer.className = `modal-footer ${extraFooter}`.trim();
+            footer.className = 'modal-footer';
             buttons.forEach(b => {
                 const btn = document.createElement('button');
                 btn.type = 'button';
@@ -223,9 +213,7 @@ const App = (() => {
 
             const onKeyDown = e => {
                 if (e.key === 'Enter') {
-                    if (document.activeElement && document.activeElement.classList.contains('btn-cancel')) {
-                        return;
-                    }
+                    if (document.activeElement && document.activeElement.classList.contains('btn-cancel')) return;
                     e.preventDefault();
                     confirmed = true;
                     m.close();
@@ -375,14 +363,14 @@ const App = (() => {
         });
 
         $('#btn-logout')?.addEventListener('click', async () => {
-            await api('POST', '/api/logout.php');
+            await api('POST', '/api/auth.php', { action: 'logout' });
             window.location.href = '/index.html';
         });
     }
 
     async function init(callback) {
         try {
-            const res = await fetch('/api/me.php', { headers: { 'Accept': 'application/json' } });
+            const res = await fetch('/api/auth.php', { headers: { 'Accept': 'application/json' } });
             const json = await res.json().catch(() => null);
             currentUser = (json?.success && json.data) ? json.data : null;
         } catch {
@@ -396,8 +384,8 @@ const App = (() => {
     return {
         init, api, toast, modal, confirm, actionButton, poll,
         showFieldErrors, clearFieldErrors, formatDateTime,
-        isoToDatetimeLocal, truncate, getStatusBadge,
-        getCapacityBarClass, safeRedirect, escapeHtml,
+        truncate, getStatusBadge, getCapacityBarClass,
+        safeRedirect, escapeHtml,
         get currentUser() { return currentUser; }
     };
 })();

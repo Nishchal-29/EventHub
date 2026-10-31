@@ -1,3 +1,8 @@
+/**
+ * auth.js — Client-side authentication workflows.
+ * Handles validation and form submission for login and signup,
+ * password toggle visibility, inline errors, and safe post-login redirection.
+ */
 'use strict';
 
 (() => {
@@ -67,7 +72,8 @@
         btn.innerHTML = '<span class="spinner-inline"></span> Creating account...';
 
         try {
-            const res = await App.api('POST', '/api/signup.php', {
+            const res = await App.api('POST', '/api/auth.php', {
+                action: 'signup',
                 name: form.querySelector('[name="name"]').value.trim(),
                 email: form.querySelector('[name="email"]').value.trim(),
                 password: form.querySelector('[name="password"]').value
@@ -101,7 +107,8 @@
         btn.innerHTML = '<span class="spinner-inline"></span> Logging in...';
 
         try {
-            const res = await App.api('POST', '/api/login.php', {
+            const res = await App.api('POST', '/api/auth.php', {
+                action: 'login',
                 email: form.querySelector('[name="email"]').value.trim(),
                 password: form.querySelector('[name="password"]').value
             });
@@ -116,7 +123,7 @@
                     App.showFieldErrors(form, { password: res.error.message || 'Invalid email or password.' });
                 } else if (res.error.fields) {
                     App.showFieldErrors(form, res.error.fields);
-                } else if (res.error.code !== 'RATE_LIMITED') {
+                } else {
                     App.toast('error', res.error.message || 'Login failed.');
                 }
             }

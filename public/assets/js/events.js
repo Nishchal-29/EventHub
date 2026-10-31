@@ -1,10 +1,11 @@
+/**
+ * events.js — Event discovery feed and real-time seat tracking.
+ * Renders all events with capacity progress bars, handles registration
+ * and cancellation actions, and polls every 5s for live seat updates.
+ */
 'use strict';
 
 (() => {
-    let currentPage = 1;
-    let currentFilters = {};
-    let loadRequestId = 0;
-    let categoriesLoaded = false;
     let poller = null;
 
     function updateEventCard(card, event) {
@@ -46,7 +47,6 @@
                     <span class="meta-date"></span>
                 </div>
                 ${event.venue ? '<div class="event-card-meta-item"><span class="meta-icon">📍</span><span class="meta-venue"></span></div>' : ''}
-                ${event.category ? '<div class="event-card-meta-item"><span class="badge badge-category"></span></div>' : ''}
             </div>
             <div class="event-card-description"></div>
             <div class="event-card-footer">
@@ -66,82 +66,35 @@
         card.querySelector('.event-card-title').textContent = event.title;
         card.querySelector('.meta-date').textContent = App.formatDateTime(event.event_date);
         if (event.venue) card.querySelector('.meta-venue').textContent = event.venue;
-        if (event.category) card.querySelector('.badge-category').textContent = event.category;
         card.querySelector('.event-card-description').textContent = App.truncate(event.description, 120);
 
         updateEventCard(card, event);
         return card;
     }
 
-    function renderPagination(pagination) {
-        const pag = $('#events-pagination');
-        if (!pag) return;
-        pag.innerHTML = '';
-        if (pagination.pages <= 1) return;
-
-        let html = '';
-        if (pagination.page > 1) {
-            html += `<button class="btn btn-outline btn-page" data-page="${pagination.page - 1}">‹</button>`;
-        }
-
-        const maxVisible = 5;
-        let start = Math.max(1, pagination.page - Math.floor(maxVisible / 2));
-        let end = Math.min(pagination.pages, start + maxVisible - 1);
-        if (end - start + 1 < maxVisible) {
-            start = Math.max(1, end - maxVisible + 1);
-        }
-
-        for (let i = start; i <= end; i++) {
-            const active = i === pagination.page ? ' active' : '';
-            html += `<button class="btn btn-outline btn-page${active}" data-page="${i}">${i}</button>`;
-        }
-
-        if (pagination.page < pagination.pages) {
-            html += `<button class="btn btn-outline btn-page" data-page="${pagination.page + 1}">›</button>`;
-        }
-
-        html += `<span class="pagination-info">Page ${pagination.page} of ${pagination.pages}</span>`;
-        pag.innerHTML = html;
-    }
-
-    async function loadEvents(page, showLoading) {
+    async function loadEvents(showLoading) {
         const grid = $('#events-grid');
-        const pag = $('#events-pagination');
-
         if (showLoading && grid) {
             grid.innerHTML = Array(6).fill('<div class="skeleton skeleton-card"></div>').join('');
-            if (pag) pag.innerHTML = '';
         }
 
-        currentPage = page || 1;
-        const reqId = ++loadRequestId;
-        const params = { ...currentFilters, page: currentPage, per_page: 12 };
-
         try {
-            const res = await App.api('GET', '/api/events.php', params);
-            if (reqId !== loadRequestId) return; // Drop stale responses
-
-            const { events, pagination, categories } = res.data;
-            if (!categoriesLoaded && categories) {
-                categoriesLoaded = true;
-                populateCategoryFilter(categories);
-            }
+            const res = await App.api('GET', '/api/events.php');
+            const events = res.data.events || [];
 
             if (events.length === 0) {
                 grid.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-state-icon">📭</div>
                         <h3>No events found</h3>
-                        <p>Try adjusting your search or filters.</p>
                     </div>
                 `;
             } else {
                 grid.innerHTML = '';
                 events.forEach(e => grid.appendChild(buildEventCard(e)));
             }
-            renderPagination(pagination);
         } catch {
-            if (reqId === loadRequestId && grid) {
+            if (grid) {
                 grid.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-state-icon">⚠️</div>
@@ -153,21 +106,12 @@
         }
     }
 
-    function populateCategoryFilter(categories) {
-        const select = $('#filter-category');
-        if (!select) return;
-        select.innerHTML = '<option value="">All Categories</option>' +
-            categories.map(c => `<option value="${App.escapeHtml(c)}">${App.escapeHtml(c)}</option>`).join('');
-        if (currentFilters.category) select.value = currentFilters.category;
-    }
-
     async function pollEvents() {
-        const params = { ...currentFilters, page: currentPage, per_page: 12 };
         try {
-            const res = await App.api('GET', '/api/events.php', params);
-            res.data.events.forEach(event => {
+            const res = await App.api('GET', '/api/events.php');
+            (res.data.events || []).forEach(event => {
                 const card = $(`.event-card[data-event-id="${event.id}"]`);
-                if (!card || card.dataset.busy) return; // Skip in-flight card mutations
+                if (!card || card.dataset.busy) return;
 
                 const countEl = card.querySelector('.capacity-count');
                 const oldText = countEl ? countEl.textContent : '';
@@ -182,50 +126,6 @@
         } catch {
         }
     }
-
-    function toggleUpcoming(el) {
-        el.classList.toggle('active');
-        const checked = el.classList.contains('active');
-        el.setAttribute('aria-checked', String(checked));
-        currentFilters.upcoming = checked ? '1' : '';
-        loadEvents(1, true);
-    }
-
-    let searchTimer = null;
-    on('input', '#search-input', function () {
-        clearTimeout(searchTimer);
-        const q = this.value;
-        searchTimer = setTimeout(() => {
-            currentFilters.q = q;
-            loadEvents(1, true);
-        }, 300);
-    });
-
-    on('change', '#filter-category', function () {
-        currentFilters.category = this.value;
-        loadEvents(1, true);
-    });
-
-    on('change', '#filter-sort', function () {
-        currentFilters.sort = this.value;
-        loadEvents(1, true);
-    });
-
-    on('click', '#toggle-upcoming', function () {
-        toggleUpcoming(this);
-    });
-
-    on('keydown', '#toggle-upcoming', function (e) {
-        if (e.key === ' ' || e.key === 'Enter') {
-            e.preventDefault();
-            toggleUpcoming(this);
-        }
-    });
-
-    on('click', '.btn-page', function () {
-        loadEvents(parseInt(this.dataset.page, 10), true);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    });
 
     on('click', '.btn-register', async function () {
         if (!App.currentUser) {
@@ -256,7 +156,7 @@
             if (res?.error) {
                 App.toast('error', res.error.message);
                 if (res.error.code === 'FULL' || res.error.code === 'DUPLICATE') {
-                    App.api('GET', '/api/event.php', { id: eventId }).then(ev => {
+                    App.api('GET', '/api/events.php', { id: eventId }).then(ev => {
                         if (ev?.success && card) updateEventCard(card, ev.data);
                     }).catch(() => {});
                 }
@@ -303,7 +203,7 @@
     document.addEventListener('DOMContentLoaded', () => {
         App.init(() => {
             if (window.location.pathname !== '/' && window.location.pathname !== '/index.html') return;
-            loadEvents(1, true);
+            loadEvents(true);
             poller = App.poll(pollEvents, 5000);
         });
     });
