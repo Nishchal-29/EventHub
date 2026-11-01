@@ -83,7 +83,7 @@ The test validates:
 1. **Row-Level Locking (`SELECT ... FOR UPDATE`):**
    In `public/api/register.php`, registrations execute inside a transaction. The event row is selected with `FOR UPDATE`. When multiple users register simultaneously for the same event, PostgreSQL serializes their transactions. Each request waits for the preceding transaction to commit or roll back before reading capacity and registration counts.
 
-2. **Database-Level Partial Unique Constraint:**
+2. **Unique Constraint:**
    The `registrations` table enforces a `UNIQUE (event_id, user_id)` constraint. Even under massive parallel load across multiple processes, the database engine guarantees that no user can ever register twice. Any concurrent insert attempt triggers PostgreSQL error `23505`, which is caught and returned as HTTP 409 `DUPLICATE`.
 
 3. **Remaining Seats Computed with COUNT (No Drift):**

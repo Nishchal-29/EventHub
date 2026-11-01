@@ -119,7 +119,7 @@
                             title: form.querySelector('#ef-title').value.trim(),
                             description: form.querySelector('#ef-description').value.trim(),
                             venue: form.querySelector('#ef-venue').value.trim(),
-                            event_date: form.querySelector('#ef-date').value,
+                            event_date: form.querySelector('#ef-date').value ? new Date(form.querySelector('#ef-date').value).toISOString() : '',
                             capacity: form.querySelector('#ef-capacity').value
                         };
 
